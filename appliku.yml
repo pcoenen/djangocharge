@@ -27,8 +27,10 @@ databases:
 
 cronjobs:
   fetchprices:
-    # Day-ahead prices are published around 13:00 CET; fetch hourly to be safe.
-    schedule: "5 * * * *"
+    # Day-ahead prices are published around 13:00 Belgian time. Cron runs in UTC:
+    # 13:00 UTC = 14:00 CET (winter) / 15:00 CEST (summer). If prices are late,
+    # the pages still fetch them on demand.
+    schedule: "0 13 * * *"
     command: python manage.py fetch_prices
 
 commands:
