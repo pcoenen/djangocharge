@@ -367,3 +367,10 @@ class FetchPricesCommandTests(TestCase):
         days = [c.args[0] for c in ensure.call_args_list]
         self.assertEqual(days[0], date(2026, 10, 5))
         self.assertEqual(days[-1], date(2026, 11, 5))
+
+
+class WellKnownTests(TestCase):
+    def test_tesla_public_key_is_served(self):
+        r = self.client.get("/.well-known/appspecific/com.tesla.3p.public-key.pem")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"BEGIN PUBLIC KEY", r.content)
