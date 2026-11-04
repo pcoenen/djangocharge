@@ -1,6 +1,5 @@
 build_settings:
   build_image: python-3.13
-  build_command: python manage.py collectstatic --noinput
   container_port: 8000
   environment_variables:
     - name: DEBUG
