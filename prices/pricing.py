@@ -7,7 +7,8 @@ from datetime import UTC, datetime, time, timedelta
 from django.conf import settings
 from django.utils import timezone
 
-from .models import QUARTER, PriceInterval
+from .converters import PriceSeries
+from .models import PriceInterval
 
 
 def day_bounds(day):
@@ -25,16 +26,6 @@ def day_bounds(day):
 
 def floor_to_quarter(dt):
     return dt.replace(minute=dt.minute - dt.minute % 15, second=0, microsecond=0)
-
-
-# Consumption ("afname"): 1.02 * market price + 4 EUR/MWh, incl. 6% VAT -> c€/kWh
-def ejection_price(price):
-    return (1.02 * price + 4) / 1000 * 100 * 1.06
-
-
-# Injection: 0.98 * market price - 15 EUR/MWh -> c€/kWh
-def injection_price(price):
-    return (0.98 * price - 15) / 1000 * 100
 
 
 def quartiles_for_date(day):
@@ -159,10 +150,18 @@ def plan_charging(current_pct, desired_pct, now, deadline):
     if needed_quarters == 0:
         return plan
 
-    cheapest = list(
-        PriceInterval.objects.filter(start__gt=now, start__lt=deadline).order_by("price", "start")[:needed_quarters]
-    )
-    cheapest.sort(key=lambda p: p.start)
+    # Rank quarters by what the tariff actually charges: with an hourly tariff
+    # all quarters of an hour cost the same, whatever their own market price.
+    # The car can start/stop per quarter, so we still pick individual quarters.
+    candidates = [
+        (period.consumption, quarter)
+        for period in PriceSeries().periods_between(now, deadline)
+        for quarter in period.quarters
+        if now < quarter.start < deadline
+    ]
+    candidates.sort(key=lambda c: (c[0], c[1].start))
+    chosen = sorted(candidates[:needed_quarters], key=lambda c: c[1].start)
+    cheapest = [q for _, q in chosen]
     plan.found_quarters = len(cheapest)
     if not cheapest:
         return plan
@@ -181,7 +180,6 @@ def plan_charging(current_pct, desired_pct, now, deadline):
         g["end_label"] = "24:00" if g["end"].date() > g["start"].date() else g["end"].strftime("%H:%M")
     plan.groups = groups
 
-    avg_market = sum(p.price for p in cheapest) / len(cheapest)
-    plan.average_energy_price = ejection_price(avg_market) / 100
+    plan.average_energy_price = sum(price for price, _ in chosen) / len(chosen) / 100
     plan.kwh_from_grid = needed_kwh * settings.CAR_CHARGE_LOSS_FACTOR
     return plan

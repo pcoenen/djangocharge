@@ -6,15 +6,23 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .entsoe import EntsoeError, ensure_prices_for, parse_prices
-from .models import PriceInterval
+from .models import EnergyContract, PriceInterval
+from .converters import Converter, PriceSeries, converter_choices, get_converter, register
 from .pricing import (
     day_bounds,
     dishwasher_options,
-    ejection_price,
-    injection_price,
     plan_charging,
     quartiles_for_date,
 )
+
+class TestCase(TestCase):
+    """Start every test with only the original (quarter) contract from migration 0003,
+    so tests don't depend on whichever real contracts later migrations add."""
+
+    def setUp(self):
+        super().setUp()
+        EnergyContract.objects.exclude(name="Original dyncharge formula").delete()
+
 
 NS = "urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:3"
 
@@ -87,10 +95,15 @@ class DayBoundsTests(TestCase):
         self.assertEqual(start, datetime(2026, 11, 3, 23, 0, tzinfo=UTC))
 
 
+def consumption(market):
+    return (1.02 * market + 4) / 10 * 1.06
+
+
 class FormulaTests(TestCase):
-    def test_prices(self):
-        self.assertAlmostEqual(ejection_price(100), (102 + 4) / 10 * 1.06)
-        self.assertAlmostEqual(injection_price(100), (98 - 15) / 10)
+    def test_seeded_contract_matches_original_formula(self):
+        contract = EnergyContract.objects.get()
+        self.assertAlmostEqual(contract.consumption_price(100), (102 + 4) / 10 * 1.06)
+        self.assertAlmostEqual(contract.injection_price(100), (98 - 15) / 10)
 
     def test_quartiles_default_without_data(self):
         self.assertEqual(quartiles_for_date(date(2026, 11, 4)), [0, 100, 100])
@@ -102,6 +115,7 @@ class FormulaTests(TestCase):
 
 class EnsurePricesTests(TestCase):
     def setUp(self):
+        super().setUp()
         cache.clear()
 
     @override_settings(ENTSOE_TOKEN="t")
@@ -157,7 +171,7 @@ class ChargingTests(TestCase):
             [(g["start"].strftime("%H:%M"), g["end_label"]) for g in plan.groups],
             [("02:00", "03:00"), ("05:00", "05:15")],
         )
-        self.assertAlmostEqual(plan.average_energy_price, ejection_price(10) / 100)
+        self.assertAlmostEqual(plan.average_energy_price, consumption(10) / 100)
 
     def test_blocks_split_at_midnight(self):
         fill_day(date(2026, 11, 4))
@@ -200,3 +214,142 @@ class ViewTests(TestCase):
 
     def test_invalid_date_falls_back(self, _):
         self.assertEqual(self.client.get(reverse("prices:price_list"), {"date": "nope"}).status_code, 200)
+
+
+def q(utc_dt, price):
+    return PriceInterval(start=utc_dt, price=price)
+
+
+def contract(name, valid_from, converter="quarter", **kw):
+    defaults = dict(
+        consumption_factor=1, consumption_offset=0, vat_rate=0, injection_factor=1, injection_offset=0
+    )
+    defaults.update(kw)
+    return EnergyContract.objects.create(name=name, valid_from=valid_from, converter=converter, **defaults)
+
+
+# Nov 5 00:00-01:00 local = Nov 4 23:00-24:00 UTC
+FIRST_HOUR_NOV5 = [datetime(2026, 11, 4, 23, 15 * i, tzinfo=UTC) for i in range(4)]
+
+
+class ConverterTests(TestCase):
+    def test_registry(self):
+        self.assertEqual([k for k, _ in converter_choices()][:3], ["quarter", "hour_mean", "hour_median"])
+
+    def test_quarter_converter_yields_one_period_per_quarter(self):
+        c = get_converter(contract("q", date(2026, 11, 5)))
+        periods = list(c.periods([q(t, p) for t, p in zip(FIRST_HOUR_NOV5, [10, 20, 30, 100])]))
+        self.assertEqual([p.market_price for p in periods], [10, 20, 30, 100])
+        self.assertEqual([p.end - p.start for p in periods], [timedelta(minutes=15)] * 4)
+
+    def test_hour_mean_yields_one_period_per_hour(self):
+        c = get_converter(contract("h", date(2026, 11, 5), "hour_mean", vat_rate=10))
+        (period,) = c.periods([q(t, p) for t, p in zip(FIRST_HOUR_NOV5, [10, 20, 30, 100])])
+        self.assertEqual((period.start, period.end), (FIRST_HOUR_NOV5[0], FIRST_HOUR_NOV5[0] + timedelta(hours=1)))
+        self.assertEqual(period.market_price, 40)
+        self.assertAlmostEqual(period.consumption, 4.4)
+        self.assertAlmostEqual(period.injection, 4.0)
+        self.assertEqual(len(period.quarters), 4)
+
+    def test_hour_median(self):
+        c = get_converter(contract("m", date(2026, 11, 5), "hour_median"))
+        (period,) = c.periods([q(t, p) for t, p in zip(FIRST_HOUR_NOV5, [10, 20, 30, 100])])
+        self.assertEqual(period.market_price, 25)
+
+    def test_custom_converter_can_be_plugged_in(self):
+        @register
+        class FlatConverter(Converter):
+            key = "test_flat"
+            label = "Flat 30 c/kWh"
+
+            def consumption_price(self, market_price):
+                return 30.0
+
+        try:
+            c = get_converter(contract("flat", date(2026, 11, 5), "test_flat"))
+            (period,) = c.periods([q(FIRST_HOUR_NOV5[0], 500)])
+            self.assertEqual(period.consumption, 30.0)
+        finally:
+            from . import converters
+
+            converters._REGISTRY.pop("test_flat")
+
+
+class PriceSeriesTests(TestCase):
+    def test_each_period_uses_the_contract_valid_at_that_time(self):
+        contract("New provider", date(2026, 11, 5), "hour_mean", consumption_offset=10, vat_rate=21)
+        quarters = [q(datetime(2026, 11, 4, 22, 15 * i, tzinfo=UTC), 100) for i in range(4)]  # Nov 4 23:xx local
+        quarters += [q(t, 100) for t in FIRST_HOUR_NOV5]  # Nov 5 00:xx local
+        periods = list(PriceSeries().periods(quarters))
+        # 4 quarter periods with the original formula, then 1 hourly period with the new one
+        self.assertEqual(len(periods), 5)
+        self.assertAlmostEqual(periods[0].consumption, consumption(100))
+        self.assertAlmostEqual(periods[4].consumption, 110 / 10 * 1.21)
+        self.assertEqual(periods[4].contract.name, "New provider")
+
+    def test_dates_before_first_contract_use_the_earliest(self):
+        EnergyContract.objects.all().delete()
+        contract("Only", date(2026, 11, 5))
+        self.assertEqual(PriceSeries().contract_at(datetime(2020, 1, 1, tzinfo=UTC)).name, "Only")
+
+    def test_without_contracts_falls_back_to_original_formula(self):
+        EnergyContract.objects.all().delete()
+        (period,) = PriceSeries().periods([q(datetime(2026, 11, 4, tzinfo=UTC), 100)])
+        self.assertAlmostEqual(period.consumption, consumption(100))
+
+    def test_periods_between_uses_whole_hours_at_the_edges(self):
+        contract("h", date(2026, 11, 5), "hour_mean")
+        fill_day(date(2026, 11, 5), lambda i: [10.0, 20.0, 30.0, 100.0][i] if i < 4 else 50.0)
+        # window starts at 00:30 local, inside the first hour
+        periods = list(PriceSeries().periods_between(FIRST_HOUR_NOV5[2], FIRST_HOUR_NOV5[0] + timedelta(hours=2)))
+        self.assertEqual([p.market_price for p in periods], [40, 50])
+
+
+@mock.patch("prices.views.ensure_prices_for", return_value=True)
+class PriceListTests(TestCase):
+    def test_history_keeps_old_contract_and_granularity(self, _):
+        contract("New", date(2026, 11, 5), "hour_mean", consumption_offset=10, vat_rate=21)
+        fill_day(date(2026, 11, 4))
+        fill_day(date(2026, 11, 5))
+        old = self.client.get(reverse("prices:price_list"), {"date": "2026-11-04"})
+        new = self.client.get(reverse("prices:price_list"), {"date": "2026-11-05"})
+        self.assertContains(old, "5,83")  # (1.02*50+4)/10*1.06
+        self.assertContains(old, "00:00 - 00:15")
+        self.assertEqual(old.content.decode().count("badge-pill"), 96)
+        self.assertContains(new, "7,26")  # (50+10)/10*1.21
+        self.assertContains(new, "00:00 - 01:00")
+        self.assertEqual(new.content.decode().count("badge-pill"), 24)
+
+
+class HourlyChargingTests(TestCase):
+    def test_charging_ranks_by_hourly_price(self):
+        fill_day(date(2026, 11, 5), lambda i: [10.0, 20.0, 30.0, 100.0][i] if i < 4 else 50.0)
+        # Quarter-wise 00:00 (10 EUR) is cheapest, but per hour 00:00-01:00 averages 40
+        # while 01:00-02:00 costs a flat 35.
+        PriceInterval.objects.filter(
+            start__gte=datetime(2026, 11, 5, 0, tzinfo=UTC), start__lt=datetime(2026, 11, 5, 1, tzinfo=UTC)
+        ).update(price=35)
+        now = datetime(2026, 11, 4, 22, 59, tzinfo=UTC)
+        deadline = datetime(2026, 11, 5, 1, 0, tzinfo=UTC)  # 02:00 local
+        needed = (20, 21)  # 0.6 kWh -> 1 quarter
+
+        c = contract("tariff", date(2026, 11, 5))
+        plan = plan_charging(*needed, now, deadline)
+        self.assertEqual(plan.groups[0]["start"].strftime("%H:%M"), "00:00")  # the 10 EUR quarter
+
+        c.converter = "hour_mean"
+        c.save()
+        plan = plan_charging(*needed, now, deadline)
+        self.assertEqual(plan.groups[0]["start"].strftime("%H:%M"), "01:00")  # hour avg 35 < 40
+        self.assertAlmostEqual(plan.average_energy_price, 3.5 / 100)
+
+
+class BelpexContractMigrationTests(TestCase):
+    def setUp(self):
+        pass  # keep the contracts created by the migrations
+
+    def test_belpex_contract_formula(self):
+        contract = EnergyContract.objects.get(name="Dynamic contract - Belpex hourly")
+        self.assertEqual(contract.converter, "hour_mean")
+        # (0.102 * index + 0.408) c/kWh excl. VAT, + 6% VAT
+        self.assertAlmostEqual(contract.consumption_price(200), (0.102 * 200 + 0.408) * 1.06)

@@ -22,6 +22,27 @@ python manage.py test prices
 - `/dishwasher/` – relative cost of starting now, in 3, 6 or 9 hours
 - `/car-charging/` – cheapest quarters to charge before a deadline
 
+## Energy contracts
+
+The database stores the raw ENTSO-E market prices (EUR/MWh). An `EnergyContract`
+(managed in `/admin/`) converts them into what the provider charges and pays:
+
+    consumption (c€/kWh) = (consumption_factor × market + consumption_offset) / 10 × (1 + VAT%)
+    injection   (c€/kWh) = (injection_factor × market + injection_offset) / 10
+
+`converter` picks the converter class (`prices/converters.py`) for the tariff. The converter
+groups the stored quarters into the periods the tariff bills on and converts them; the UI just
+shows whatever periods it yields:
+
+- `quarter` – one row per 15 minutes
+- `hour_mean` / `hour_median` – one row per hour, priced on the mean/median of its quarters
+
+A new kind of tariff is a subclass of `Converter` decorated with `@register`; it then appears as a
+choice in the admin.
+
+Each contract applies from its `valid_from` date until the next one, so when you switch
+provider you add a new contract and history keeps using the old one.
+
 Prices are fetched on demand when a day is missing, and by the `fetch_prices` cron job.
 
 ## Deployment (Appliku)

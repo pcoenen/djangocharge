@@ -5,13 +5,10 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from .entsoe import ensure_prices_for
-from .models import PriceInterval
+from .converters import PriceSeries
 from .pricing import (
     day_bounds,
     dishwasher_options,
-    ejection_price,
-    floor_to_quarter,
-    injection_price,
     plan_charging,
     price_class,
     quartiles_for_date,
@@ -32,20 +29,20 @@ def price_list(request):
     ensure_prices_for(day)
     quartiles = quartiles_for_date(day)
     start, end = day_bounds(day)
-    current_quarter = floor_to_quarter(timezone.localtime())
+    now = timezone.now()
 
+    # The tariff's converter decides whether rows are quarters, hours, ...
     rows = []
-    for interval in PriceInterval.objects.filter(start__gte=start, start__lt=end):
-        injection = injection_price(interval.price)
+    for period in PriceSeries().periods_between(start, end):
         rows.append(
             {
-                "start": timezone.localtime(interval.start),
-                "end": timezone.localtime(interval.end),
-                "ejection": ejection_price(interval.price),
-                "ejection_class": price_class(interval.price, quartiles),
-                "injection": injection,
-                "injection_class": "text-danger" if injection < 0 else "",
-                "is_current": interval.start == current_quarter,
+                "start": timezone.localtime(period.start),
+                "end": timezone.localtime(period.end),
+                "ejection": period.consumption,
+                "ejection_class": price_class(period.market_price, quartiles),
+                "injection": period.injection,
+                "injection_class": "text-danger" if period.injection < 0 else "",
+                "is_current": period.contains(now),
             }
         )
 
