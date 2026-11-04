@@ -34,4 +34,4 @@ cronjobs:
 commands:
   - python manage.py migrate
   - python manage.py createsuperuser
-  - python manage.py fetch_prices --start 2026-10-01 --days 31
+  - python manage.py fetch_prices

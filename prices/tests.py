@@ -353,3 +353,17 @@ class BelpexContractMigrationTests(TestCase):
         self.assertEqual(contract.converter, "hour_mean")
         # (0.102 * index + 0.408) c/kWh excl. VAT, + 6% VAT
         self.assertAlmostEqual(contract.consumption_price(200), (0.102 * 200 + 0.408) * 1.06)
+
+
+class FetchPricesCommandTests(TestCase):
+    def test_default_covers_history_through_tomorrow(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        with mock.patch("prices.management.commands.fetch_prices.ensure_prices_for", return_value=True) as ensure, \
+                mock.patch("prices.management.commands.fetch_prices.timezone.localdate", return_value=date(2026, 11, 4)):
+            call_command("fetch_prices", stdout=StringIO())
+        days = [c.args[0] for c in ensure.call_args_list]
+        self.assertEqual(days[0], date(2026, 10, 5))
+        self.assertEqual(days[-1], date(2026, 11, 5))

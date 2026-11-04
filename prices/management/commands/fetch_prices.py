@@ -5,9 +5,14 @@ from django.utils import timezone
 
 from prices.entsoe import ensure_prices_for
 
+HISTORY_DAYS = 30  # needed for the quartile colours on the price list
+
 
 class Command(BaseCommand):
-    help = "Fetch ENTSO-E day-ahead prices (default: today and tomorrow). Suitable for cron."
+    help = (
+        "Fetch ENTSO-E day-ahead prices. By default makes sure the last 30 days, today and "
+        "tomorrow are stored; complete days are skipped, so this is cheap to run from cron."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--start", type=date.fromisoformat, help="First date (YYYY-MM-DD)")
@@ -15,8 +20,11 @@ class Command(BaseCommand):
         parser.add_argument("--force", action="store_true", help="Refetch even if already stored")
 
     def handle(self, *args, start=None, days=None, force=False, **options):
-        days = days or (1 if start else 2)
-        start = start or timezone.localdate()
+        today = timezone.localdate()
+        if start is None:
+            start = today - timedelta(days=HISTORY_DAYS)
+            days = days or HISTORY_DAYS + 2  # through tomorrow
+        days = days or 1
         for i in range(days):
             day = start + timedelta(days=i)
             ok = ensure_prices_for(day, force=force)
