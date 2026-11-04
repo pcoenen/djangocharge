@@ -26,7 +26,7 @@ databases:
     type: postgresql_17
 
 cronjobs:
-  fetch_prices:
+  fetchprices:
     # Day-ahead prices are published around 13:00 CET; fetch hourly to be safe.
     schedule: "5 * * * *"
     command: python manage.py fetch_prices
