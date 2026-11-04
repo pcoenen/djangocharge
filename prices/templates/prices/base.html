@@ -1,0 +1,22 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>{% block title %}Dyncharge{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'prices/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'prices/main.css' %}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row content mb-2">
+            <div class="col-sm-12 title">
+                <h4 class="title-text">{% block heading %}<a href="{% url 'prices:index' %}" class="arrow">Dyncharge</a>{% endblock %}</h4>
+            </div>
+        </div>
+        {% block content %}{% endblock %}
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

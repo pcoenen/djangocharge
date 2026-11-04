@@ -1,0 +1,20 @@
+{% extends "prices/base.html" %}
+{% block content %}
+<div class="mt-3">
+    <div class="row justify-content-center">
+        <div class="col-md-10 my-3">
+            <a href="{% url 'prices:price_list' %}" class="btn btn-primary btn-lg btn-block">Price List</a>
+        </div>
+    </div>
+    <div class="row justify-content-center">
+        <div class="col-md-10 my-3">
+            <a href="{% url 'prices:dishwasher' %}" class="btn btn-primary btn-lg btn-block">Dishwasher</a>
+        </div>
+    </div>
+    <div class="row justify-content-center">
+        <div class="col-md-10 my-3">
+            <a href="{% url 'prices:car_charging' %}" class="btn btn-primary btn-lg btn-block">Car Charging</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

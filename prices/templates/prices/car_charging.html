@@ -1,0 +1,39 @@
+{% extends "prices/base.html" %}
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+{% endblock %}
+{% block content %}
+<div class="mt-3">
+    <form method="post">
+        {% csrf_token %}
+        {% if form.errors %}<div class="alert alert-danger">{{ form.errors }}</div>{% endif %}
+        <div class="mb-3">
+            <label for="currentPercentage" class="form-label">Current battery percentage <span id="currentPercentageText">{{ form.current_percentage.value }}</span>%</label>
+            <input type="range" name="current_percentage" class="form-control" id="currentPercentage" min="0" max="100" step="5" value="{{ form.current_percentage.value }}" oninput="document.getElementById('currentPercentageText').textContent = this.value">
+        </div>
+        <div class="mb-3">
+            <label for="desiredPercentage" class="form-label">Desired battery percentage <span id="desiredPercentageText">{{ form.desired_percentage.value }}</span>%</label>
+            <input type="range" name="desired_percentage" class="form-control" id="desiredPercentage" min="0" max="100" step="5" value="{{ form.desired_percentage.value }}" oninput="document.getElementById('desiredPercentageText').textContent = this.value">
+        </div>
+        <div class="mb-3">
+            <label for="daySelector" class="form-label">Select a day</label>
+            <select class="form-control" name="day" id="daySelector">
+                {% for value, label in form.fields.day.choices %}
+                <option value="{{ value }}"{% if form.day.value == value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="mb-3">
+            <label for="hourSelector" class="form-label">Select an hour</label>
+            <input type="text" name="hour" class="form-control" id="hourSelector" placeholder="Select an hour" value="{{ form.hour.value|default:'07:00' }}">
+        </div>
+        <button class="btn btn-primary">Calculate</button>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+<script>
+    flatpickr("#hourSelector", {enableTime: true, noCalendar: true, dateFormat: "H:i", time_24hr: true});
+</script>
+{% endblock %}

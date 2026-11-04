@@ -1,0 +1,22 @@
+{% extends "prices/base.html" %}
+{% block content %}
+<div class="mt-3">
+    <div class="row justify-content-center">
+        <div class="col-md-10 my-3">
+            <table class="table" style="background-color: white;">
+                <thead>
+                    <tr><th>Time</th><th>Percentage</th></tr>
+                </thead>
+                <tbody>
+                    {% for option in options %}
+                    <tr style="background-color: {{ option.color }};">
+                        <td>{{ option.label }}</td>
+                        <td>{% if option.percentage is not None %}{{ option.percentage }}%{% else %}<span class="text-muted">no prices yet</span>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

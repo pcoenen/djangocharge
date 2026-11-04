@@ -1,0 +1,27 @@
+{% extends "prices/base.html" %}
+{% load dyncharge %}
+{% block heading %}
+<a href="?date={{ prev_day|date:'Y-m-d' }}" class="arrow left-arrow" title="Previous Date">&lt;</a>{{ day|date:"d/m/Y" }}<a href="?date={{ next_day|date:'Y-m-d' }}" class="arrow right-arrow" title="Next Date">&gt;</a>
+{% endblock %}
+{% block content %}
+<div class="row content">
+    <div class="col-sm-12">
+        {% if rows %}
+        <table class="table price-table">
+            <tbody>
+                {% for row in rows %}
+                <tr{% if row.is_current %} class="bg-custom-gray"{% endif %}>
+                    <td><span class="badge badge-primary badge-pill">{{ row.start|time:"H:i" }} - {{ row.end|time:"H:i" }}</span></td>
+                    <td><span class="{{ row.ejection_class }}">{{ row.ejection|eu }}</span></td>
+                    <td><span class="{{ row.injection_class }}">{{ row.injection|eu }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="alert alert-light" role="alert">No prices available for this day (yet).</div>
+        {% endif %}
+    </div>
+</div>
+<br>
+{% endblock %}
