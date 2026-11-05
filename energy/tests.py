@@ -441,6 +441,7 @@ END:VCALENDAR
 NOW = datetime(2026, 11, 10, 0, 0, tzinfo=UTC)
 
 
+@mock.patch("energy.calendar_sync.LOOKAHEAD", timedelta(days=3))  # these tests use a wider window
 @mock.patch("energy.calendar_sync.fetch")
 class CalendarTests(EnergyTestCase):
     def sync(self, fetch, ics=ICS):
@@ -462,6 +463,14 @@ class CalendarTests(EnergyTestCase):
         # all-day: local midnight (CET) minus 30 minutes
         self.assertEqual(t["Holiday"].deadline, datetime(2026, 11, 11, 22, 30, tzinfo=UTC))
         self.assertTrue(t["Training"].external_id.startswith("weekly@2026-11-10T18:00"))
+
+    def test_only_next_12_hours_by_default(self, fetch):
+        from . import calendar_sync
+
+        with mock.patch.object(calendar_sync, "LOOKAHEAD", timedelta(hours=12)):
+            self.sync(fetch)
+        # V starts 07:00 (within 12h); Training at 18:00 and later events are not yet included
+        self.assertEqual(set(self.targets()), {"V"})
 
     def test_sync_is_idempotent(self, fetch):
         self.sync(fetch)

@@ -1,7 +1,8 @@
 """Calendar events (.ics link in CHARGE_CALENDAR_URL) become charge targets.
 
 Every event needs the car at CALENDAR_PCT % CALENDAR_LEAD before it starts.
-Each 30-minute check reads the calendar again and syncs the targets:
+Each 30-minute check reads the calendar again and syncs the targets for the
+events starting within the next 12 hours:
 new event -> new target, moved event -> deadline moves, deleted or cancelled
 event -> target removed. An event you ignored stays ignored, also when moved.
 """
@@ -18,7 +19,7 @@ from .models import ChargeTarget
 
 CALENDAR_PCT = 40
 CALENDAR_LEAD = timedelta(minutes=30)
-LOOKAHEAD = timedelta(days=3)
+LOOKAHEAD = timedelta(hours=12)  # only events starting within 12 hours become targets
 
 
 class CalendarError(Exception):
