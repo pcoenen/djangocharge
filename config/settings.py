@@ -146,9 +146,19 @@ TESLA_HOME_LON = env.float("TESLA_HOME_LON", default=0.0)
 # .ics link whose events need the car at 40% half an hour before they start (phase 4)
 CHARGE_CALENDAR_URL = env("CHARGE_CALENDAR_URL", default="")
 
-# Notifications: EMAIL_URL like smtp+tls://user:password@smtp.example.com:587
-# (consolemail:// just logs them). Nothing is sent without NOTIFY_EMAIL.
-# An empty value (declared on Appliku but not set yet) also means "log only"
-vars().update(environ.Env.email_url_config(env.str("EMAIL_URL", default="") or "consolemail://"))
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="dyncharge@oraston.be")
+# Notifications: Maileroo SMTP, same account as preference_planner. Without
+# EMAIL_HOST_PASSWORD they're only logged. Nothing is sent without NOTIFY_EMAIL.
+EMAIL_HOST = "smtp.maileroo.com"
+EMAIL_PORT = 587  # 587 for TLS, 465 for SSL
+EMAIL_USE_TLS = True
+EMAIL_USE_SSL = False
+EMAIL_HOST_USER = env.str("EMAIL_HOST_USER", default="info@preferenceplanner.com")
+EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD", default="")
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST_PASSWORD
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_TIMEOUT = 30
+DEFAULT_FROM_EMAIL = env.str("DEFAULT_FROM_EMAIL", default=f"Dyncharge <{EMAIL_HOST_USER}>")
 NOTIFY_EMAIL = env("NOTIFY_EMAIL", default="")

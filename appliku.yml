@@ -26,7 +26,7 @@ build_settings:
       source: manual
     - name: CHARGE_CALENDAR_URL
       source: manual
-    - name: EMAIL_URL
+    - name: EMAIL_HOST_PASSWORD
       source: manual
     - name: NOTIFY_EMAIL
       source: manual

@@ -32,7 +32,7 @@ Tesla's cache (never wakes the car), re-plans (price rule first, then each targe
 the cheapest quarters before its deadline) and, one hour before the first quarter that differs
 from what's on the car, wakes the car and replaces its charge schedules and limit. A car that
 isn't plugged in isn't woken; at most 6 sends a day. Problems are emailed once to `NOTIFY_EMAIL`
-via `EMAIL_URL` (e.g. `smtp+tls://user:password@host:587`).
+through Maileroo SMTP (the preference_planner account); set `EMAIL_HOST_PASSWORD` to enable.
 
 ## Energy contracts
 
@@ -61,5 +61,5 @@ Prices are fetched on demand when a day is missing, and by the `fetch_prices` cr
 
 `appliku.yml` defines the build, `run.sh` (gunicorn), `release.sh` (migrations), a PostgreSQL 17
 database (`DATABASE_URL`), a daily `fetch_prices` and a 30-minute `energy_tick` cron job. Set
-`SECRET_KEY`, `ENTSOE_TOKEN`, the `TESLA_*` vars, `CHARGE_CALENDAR_URL`, `EMAIL_URL` and
+`SECRET_KEY`, `ENTSOE_TOKEN`, the `TESLA_*` vars, `CHARGE_CALENDAR_URL`, `EMAIL_HOST_PASSWORD` and
 `NOTIFY_EMAIL` as config vars; `ALLOWED_HOSTS` comes from the app's domains.
