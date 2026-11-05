@@ -1,0 +1,136 @@
+{% extends "prices/base.html" %}
+{% load tesla_extras %}
+{% block title %}Tesla - Dyncharge{% endblock %}
+{% block heading %}Tesla{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+<div class="col-lg-8">
+
+    {% if not configured %}
+    <div class="alert alert-warning">
+        The Tesla integration isn't configured: set <code>TESLA_CLIENT_ID</code>, <code>TESLA_CLIENT_SECRET</code>
+        and <code>TESLA_PRIVATE_KEY_B64</code>.
+    </div>
+    {% endif %}
+    {% for error in errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
+
+    {# 1. Account #}
+    <div class="card card-dyn">
+        <div class="card-body d-flex justify-content-between align-items-center flex-wrap">
+            <div>
+                <div class="card-title">
+                    <span class="status-dot {% if account %}ok{% endif %}"></span>Tesla account
+                </div>
+                <small class="text-muted">
+                    {% if account %}Connected since {{ account.connected_at|date:"d/m/Y" }}{% if vehicle %} &middot; {{ vehicle }}{% endif %}
+                    {% else %}Log in with Tesla so Dyncharge can read your car and send charge plans.{% endif %}
+                </small>
+            </div>
+            <div class="mt-2 mt-sm-0">
+                {% if account %}
+                <form method="post" action="{% url 'tesla:refresh_vehicles' %}" class="d-inline">{% csrf_token %}
+                    <button class="btn btn-sm btn-outline-secondary">Refresh cars</button>
+                </form>
+                <form method="post" action="{% url 'tesla:disconnect' %}" class="d-inline"
+                      onsubmit="return confirm('Disconnect the Tesla account?')">{% csrf_token %}
+                    <button class="btn btn-sm btn-outline-danger">Disconnect</button>
+                </form>
+                {% elif configured %}
+                <a href="{% url 'tesla:connect' %}" class="btn btn-primary">Connect Tesla</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if account and not vehicle %}
+    <div class="alert alert-warning">No car found on this Tesla account.</div>
+    {% endif %}
+
+    {% if vehicle %}
+    {# 2. Virtual key #}
+    <div class="card card-dyn">
+        <div class="card-body d-flex justify-content-between align-items-center flex-wrap">
+            <div>
+                <div class="card-title">
+                    <span class="status-dot {% if fleet.key_paired %}ok{% elif fleet %}bad{% endif %}"></span>Virtual key
+                </div>
+                <small class="text-muted">
+                    {% if fleet.key_paired %}Dyncharge's key is on the car{% if fleet.firmware %} &middot; firmware {{ fleet.firmware }}{% endif %}.
+                    {% elif fleet %}The car doesn't have Dyncharge's key yet, so it will refuse commands.
+                    {% else %}Status unknown.{% endif %}
+                </small>
+            </div>
+            {% if not fleet.key_paired %}
+            <a href="{{ add_key_url }}" class="btn btn-primary mt-2 mt-sm-0" target="_blank" rel="noopener">Add virtual key</a>
+            {% endif %}
+        </div>
+        {% if not fleet.key_paired %}
+        <div class="card-footer bg-white"><small class="text-muted">
+            Open the link on your phone with the Tesla app, near the car, and approve the key.
+        </small></div>
+        {% endif %}
+    </div>
+
+    {# 3. Car #}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                <div class="card-title">
+                    <span class="status-dot {% if online == 'online' %}ok{% elif online == 'asleep' %}warn{% endif %}"></span>{{ vehicle }}
+                    <small class="text-muted font-weight-normal">&middot; {{ online|default:"unknown" }}</small>
+                </div>
+                {% if online != 'online' %}
+                <form method="post" action="{% url 'tesla:wake' %}">{% csrf_token %}
+                    <button class="btn btn-sm btn-outline-secondary" title="Waking the car costs a little Fleet API credit">Wake up</button>
+                </form>
+                {% endif %}
+            </div>
+            {% if charge %}
+            <div class="battery mt-3">
+                <div class="battery-fill" style="width: {{ charge.battery_level|default:0 }}%">{{ charge.battery_level }}%</div>
+            </div>
+            <div class="d-flex justify-content-between mt-1"><small class="text-muted">
+                {{ charge.charging_state|default:"" }}{% if charge.range_km %} &middot; {{ charge.range_km }} km{% endif %}
+            </small><small class="text-muted">Limit {{ charge.charge_limit }}%</small></div>
+            {% if charge.schedules %}
+            <div class="mt-3"><small class="font-weight-bold">Charge schedules on the car</small>
+                <ul class="mb-0 pl-3"><small>
+                {% for s in charge.schedules %}
+                    <li>{{ s.name|default:"Schedule" }}{% if s.one_time %} (once){% endif %}: {% if s.start_enabled %}{{ s.start_time|hhmm }}{% else %}&hellip;{% endif %} &ndash; {% if s.end_enabled %}{{ s.end_time|hhmm }}{% else %}&hellip;{% endif %}{% if not s.enabled %} &middot; disabled{% endif %}</li>
+                {% endfor %}
+                </small></ul>
+            </div>
+            {% endif %}
+            {% elif online and online != 'online' %}
+            <p class="mb-0 mt-2"><small class="text-muted">The car is {{ online }}; battery info appears when it's awake. Dyncharge doesn't wake it unless you ask.</small></p>
+            {% endif %}
+        </div>
+    </div>
+
+    <a href="{% url 'prices:car_charging' %}" class="btn btn-primary btn-lg btn-block mb-3">Plan cheapest charging</a>
+    {% if not home_set %}
+    <div class="alert alert-warning">Home location isn't set (<code>TESLA_HOME_LAT</code>/<code>TESLA_HOME_LON</code>); charge schedules only apply at that location.</div>
+    {% endif %}
+    {% endif %}
+
+    {# 4. Recent plans #}
+    {% if submissions %}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="card-title mb-2">Recently sent plans</div>
+            <ul class="list-unstyled mb-0"><small>
+            {% for sub in submissions %}
+                <li class="mb-1">
+                    <span class="status-dot {% if sub.succeeded %}ok{% else %}bad{% endif %}"></span>
+                    {{ sub.created_at|date:"d/m H:i" }} &middot; limit {{ sub.charge_limit }}% &middot; ready {{ sub.deadline|date:"D H:i" }}
+                    {% if sub.error %}<br><span class="text-danger">{{ sub.error|truncatechars:200 }}</span>{% endif %}
+                </li>
+            {% endfor %}
+            </small></ul>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+</div>
+{% endblock %}

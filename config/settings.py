@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "prices",
+    "tesla",
 ]
 
 MIDDLEWARE = [
@@ -38,6 +39,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Everything requires a login, except views marked @login_not_required
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -47,7 +50,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -91,6 +94,10 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "prices:index"
+LOGOUT_REDIRECT_URL = "login"
+
 # Appliku terminates TLS at nginx
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -116,3 +123,20 @@ CAR_CHARGE_PHASES = 3
 CAR_CHARGE_EFFICIENCY = 0.92
 CAR_CHARGE_LOSS_FACTOR = 1.10  # kWh drawn from grid per kWh in battery
 GRID_FEE_PER_KWH = 0.13  # EUR/kWh on top of the energy price
+
+# --- Tesla Fleet API ---
+TESLA_CLIENT_ID = env("TESLA_CLIENT_ID", default="")
+TESLA_CLIENT_SECRET = env("TESLA_CLIENT_SECRET", default="")
+TESLA_REGION = "eu"
+TESLA_API_URL = "https://fleet-api.prd.eu.vn.cloud.tesla.com"
+TESLA_AUTH_URL = "https://auth.tesla.com/oauth2/v3/authorize"
+TESLA_TOKEN_URL = "https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token"
+TESLA_SCOPES = "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds"
+# Must match an allowed redirect URI of the app on developer.tesla.com
+TESLA_REDIRECT_URI = env("TESLA_REDIRECT_URI", default="https://dyncharge.oraston.be/tesla-api/redirect.php")
+TESLA_DOMAIN = env("TESLA_DOMAIN", default="dyncharge.oraston.be")
+# Private key of the pair whose public key is served at /.well-known/, base64-encoded PEM
+TESLA_PRIVATE_KEY_B64 = env("TESLA_PRIVATE_KEY_B64", default="")
+# Charge schedules only apply at this location (home)
+TESLA_HOME_LAT = env.float("TESLA_HOME_LAT", default=0.0)
+TESLA_HOME_LON = env.float("TESLA_HOME_LON", default=0.0)

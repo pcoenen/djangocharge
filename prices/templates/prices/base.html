@@ -9,12 +9,34 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    {% if user.is_authenticated %}
+    {% with url_name=request.resolver_match.url_name ns=request.resolver_match.namespace %}
+    <nav class="navbar navbar-expand navbar-dark navbar-dyn">
+        <a class="navbar-brand font-weight-bold" href="{% url 'prices:index' %}">Dyncharge</a>
+        <ul class="navbar-nav mr-auto nav-scroll">
+            <li class="nav-item{% if url_name == 'price_list' %} active{% endif %}"><a class="nav-link" href="{% url 'prices:price_list' %}">Prices</a></li>
+            <li class="nav-item{% if url_name == 'dishwasher' %} active{% endif %}"><a class="nav-link" href="{% url 'prices:dishwasher' %}">Dishwasher</a></li>
+            <li class="nav-item{% if url_name == 'car_charging' %} active{% endif %}"><a class="nav-link" href="{% url 'prices:car_charging' %}">Charging</a></li>
+            <li class="nav-item{% if ns == 'tesla' %} active{% endif %}"><a class="nav-link" href="{% url 'tesla:dashboard' %}">Tesla</a></li>
+        </ul>
+        <form method="post" action="{% url 'logout' %}" class="form-inline">
+            {% csrf_token %}
+            <button class="btn btn-link nav-link text-white-50 p-0" title="Log out {{ user.get_username }}">Log out</button>
+        </form>
+    </nav>
+    {% endwith %}
+    {% endif %}
     <div class="container-fluid">
+        {% block header %}
         <div class="row content mb-2">
             <div class="col-sm-12 title">
-                <h4 class="title-text">{% block heading %}<a href="{% url 'prices:index' %}" class="arrow">Dyncharge</a>{% endblock %}</h4>
+                <h4 class="title-text">{% block heading %}Dyncharge{% endblock %}</h4>
             </div>
         </div>
+        {% endblock %}
+        {% for message in messages %}
+        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %}" role="alert">{{ message }}</div>
+        {% endfor %}
         {% block content %}{% endblock %}
     </div>
     {% block scripts %}{% endblock %}

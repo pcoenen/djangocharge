@@ -76,15 +76,28 @@ class CarChargingForm(forms.Form):
     hour = forms.TimeField(input_formats=["%H:%M"], initial="07:00")
 
 
+def plan_from_form(data):
+    """The charging plan for a validated CarChargingForm. Returns (plan, deadline)."""
+    _ensure_upcoming_prices()
+    target_day = timezone.localdate()
+    if data["day"] == "tomorrow":
+        target_day += timedelta(days=1)
+    deadline = datetime.combine(target_day, data["hour"], tzinfo=timezone.get_current_timezone())
+    plan = plan_charging(data["current_percentage"], data["desired_percentage"], timezone.now(), deadline)
+    return plan, deadline
+
+
 def car_charging(request):
-    form = CarChargingForm(request.POST or None)
+    from tesla.client import car_summary
+
+    car = car_summary() if request.method == "GET" else None
+    initial = {"current_percentage": car["battery_level"]} if car and car.get("battery_level") is not None else {}
+    form = CarChargingForm(request.POST or None, initial=initial)
     if request.method == "POST" and form.is_valid():
-        _ensure_upcoming_prices()
-        data = form.cleaned_data
-        target_day = timezone.localdate()
-        if data["day"] == "tomorrow":
-            target_day += timedelta(days=1)
-        deadline = datetime.combine(target_day, data["hour"], tzinfo=timezone.get_current_timezone())
-        plan = plan_charging(data["current_percentage"], data["desired_percentage"], timezone.now(), deadline)
-        return render(request, "prices/car_charging_result.html", {"plan": plan, "deadline": deadline})
-    return render(request, "prices/car_charging.html", {"form": form})
+        plan, deadline = plan_from_form(form.cleaned_data)
+        return render(
+            request,
+            "prices/car_charging_result.html",
+            {"plan": plan, "deadline": deadline, "form_data": request.POST, "tesla_connected": car_summary(fetch=False)},
+        )
+    return render(request, "prices/car_charging.html", {"form": form, "car": car})

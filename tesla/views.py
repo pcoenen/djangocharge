@@ -1,0 +1,112 @@
+import secrets
+
+from django.conf import settings
+from django.contrib import messages
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
+
+from prices.views import CarChargingForm, plan_from_form
+
+from . import client
+from .models import ChargePlanSubmission, TeslaAccount, TeslaVehicle
+
+
+def _configured():
+    return bool(settings.TESLA_CLIENT_ID and settings.TESLA_CLIENT_SECRET and settings.TESLA_PRIVATE_KEY_B64)
+
+
+def dashboard(request):
+    """Connection status: account, virtual key, car state. Never wakes the car."""
+    ctx = {
+        "configured": _configured(),
+        "account": TeslaAccount.objects.first(),
+        "vehicle": TeslaVehicle.objects.first(),
+        "add_key_url": f"https://tesla.com/_ak/{settings.TESLA_DOMAIN}",
+        "home_set": bool(settings.TESLA_HOME_LAT or settings.TESLA_HOME_LON),
+        "submissions": ChargePlanSubmission.objects.select_related("vehicle")[:5],
+        "errors": [],
+    }
+    vehicle = ctx["vehicle"]
+    if ctx["account"] and vehicle:
+        try:
+            ctx["fleet"] = client.fleet_status(vehicle.vin)
+            ctx["online"] = client.online_state(vehicle.vin)
+            if ctx["online"] == "online":
+                ctx["charge"] = client.charge_state(vehicle.vin)
+        except client.VehicleAsleep:
+            ctx["online"] = "asleep"
+        except client.TeslaError as e:
+            ctx["errors"].append(str(e))
+    return render(request, "tesla/dashboard.html", ctx)
+
+
+def connect(request):
+    state = secrets.token_urlsafe(16)
+    request.session["tesla_oauth_state"] = state
+    return redirect(client.authorize_url(state))
+
+
+def callback(request):
+    expected = request.session.pop("tesla_oauth_state", None)
+    if request.GET.get("error"):
+        messages.error(request, f"Tesla login was cancelled: {request.GET.get('error_description') or request.GET['error']}")
+    elif not expected or request.GET.get("state") != expected:
+        messages.error(request, "Tesla login failed: invalid state. Please try again.")
+    elif not request.GET.get("code"):
+        messages.error(request, "Tesla login failed: no authorization code received.")
+    else:
+        try:
+            client.connect(request.GET["code"])
+            messages.success(request, "Tesla account connected.")
+        except client.TeslaError as e:
+            messages.error(request, f"Connecting the Tesla account failed: {e}")
+    return redirect("tesla:dashboard")
+
+
+@require_POST
+def disconnect(request):
+    TeslaAccount.objects.all().delete()
+    messages.success(request, "Tesla account disconnected.")
+    return redirect("tesla:dashboard")
+
+
+@require_POST
+def refresh_vehicles(request):
+    try:
+        vehicles = client.sync_vehicles()
+        messages.success(request, f"Found {len(vehicles)} car(s).")
+    except client.TeslaError as e:
+        messages.error(request, str(e))
+    return redirect("tesla:dashboard")
+
+
+@require_POST
+def wake(request):
+    try:
+        client.wake_up(client.get_vehicle().vin)
+        messages.success(request, "The car is awake.")
+    except client.TeslaError as e:
+        messages.error(request, str(e))
+    return redirect("tesla:dashboard")
+
+
+@require_POST
+def send_plan(request):
+    form = CarChargingForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Invalid charge plan; please calculate it again.")
+        return redirect("prices:car_charging")
+    plan, deadline = plan_from_form(form.cleaned_data)
+    if not plan.groups:
+        messages.error(request, "There are no charging hours to send.")
+        return redirect("prices:car_charging")
+    try:
+        submission = client.send_charge_plan(
+            client.get_vehicle(), plan, form.cleaned_data["desired_percentage"], deadline
+        )
+    except client.TeslaError as e:
+        messages.error(request, f"Sending the plan to the car failed: {e}")
+        return redirect("tesla:dashboard")
+    blocks = ", ".join(f"{s['day']} {s['start'][11:16]}-{s['end'][11:16]}" for s in submission.schedules)
+    messages.success(request, f"Charge plan sent: limit {submission.charge_limit}%, charging {blocks}.")
+    return redirect("tesla:dashboard")

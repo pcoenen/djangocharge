@@ -22,6 +22,10 @@ class TestCase(TestCase):
     def setUp(self):
         super().setUp()
         EnergyContract.objects.exclude(name="Original dyncharge formula").delete()
+        from django.contrib.auth import get_user_model
+
+        self.user = get_user_model().objects.create_user("tester", password="pw")
+        self.client.force_login(self.user)
 
 
 NS = "urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:3"
@@ -371,6 +375,20 @@ class FetchPricesCommandTests(TestCase):
 
 class WellKnownTests(TestCase):
     def test_tesla_public_key_is_served(self):
+        self.client.logout()  # Tesla fetches it without a login
         r = self.client.get("/.well-known/appspecific/com.tesla.3p.public-key.pem")
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"BEGIN PUBLIC KEY", r.content)
+
+
+class LoginTests(TestCase):
+    def test_pages_require_login(self):
+        self.client.logout()
+        for url in ["/", "/prices/", "/dishwasher/", "/car-charging/", "/tesla/"]:
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 302, url)
+            self.assertTrue(r["Location"].startswith("/accounts/login/"), url)
+
+    def test_login_page_is_public(self):
+        self.client.logout()
+        self.assertEqual(self.client.get("/accounts/login/").status_code, 200)

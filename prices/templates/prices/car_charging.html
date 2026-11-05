@@ -6,6 +6,12 @@
 <div class="mt-3">
     <form method="post">
         {% csrf_token %}
+        {% if car %}
+        <div class="alert alert-light py-2">
+            {% if car.battery_level is not None %}{{ car.name }} is at <strong>{{ car.battery_level }}%</strong> &mdash; filled in below.
+            {% else %}{{ car.name }} is {{ car.state|default:"unreachable" }}; set the current battery level yourself.{% endif %}
+        </div>
+        {% endif %}
         {% if form.errors %}<div class="alert alert-danger">{{ form.errors }}</div>{% endif %}
         <div class="mb-3">
             <label for="currentPercentage" class="form-label">Current battery percentage <span id="currentPercentageText">{{ form.current_percentage.value }}</span>%</label>

@@ -29,6 +29,17 @@
         </div>
         {% endif %}
     {% endif %}
+    {% if plan.groups and tesla_connected %}
+    <form method="post" action="{% url 'tesla:send_plan' %}" class="d-inline"
+          onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Sending to car…';">
+        {% csrf_token %}
+        <input type="hidden" name="current_percentage" value="{{ form_data.current_percentage }}">
+        <input type="hidden" name="desired_percentage" value="{{ form_data.desired_percentage }}">
+        <input type="hidden" name="day" value="{{ form_data.day }}">
+        <input type="hidden" name="hour" value="{{ form_data.hour }}">
+        <button class="btn btn-success">Send to {{ tesla_connected.name }}</button>
+    </form>
+    {% endif %}
     <a href="{% url 'prices:car_charging' %}" class="btn btn-primary">Back</a>
 </div>
 {% endblock %}
