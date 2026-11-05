@@ -23,6 +23,7 @@ urlpatterns = [
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("admin/", admin.site.urls),
     path("tesla/", include("tesla.urls")),
+    path("energy/", include("energy.urls")),
     # The OAuth redirect URI registered on developer.tesla.com (from the PHP version)
     path("tesla-api/redirect.php", tesla_views.callback),
     path("", include("prices.urls")),

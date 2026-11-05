@@ -314,7 +314,7 @@ class ObservationTests(TeslaTestCase):
     def test_tick_without_tesla_is_skipped(self):
         out = StringIO()
         call_command("energy_tick", stdout=out)
-        self.assertIn("Skipped", out.getvalue())
+        self.assertIn("Car not read", out.getvalue())
 
     @mock.patch("tesla.client.requests.request", return_value=response(404, {"error": "no cached data"}))
     def test_tick_reports_errors(self, _):

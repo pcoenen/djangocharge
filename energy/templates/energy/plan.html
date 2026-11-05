@@ -1,0 +1,105 @@
+{% extends "prices/base.html" %}
+{% load dyncharge %}
+{% block title %}Energy plan - Dyncharge{% endblock %}
+{% block heading %}<a href="{% url 'prices:index' %}" class="arrow">Energy plan</a>{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+<div class="col-lg-8">
+
+    {# Battery #}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="card-title">Battery</div>
+            {% if observation %}
+            <div class="battery mt-2">
+                <div class="battery-fill" style="width: {{ observation.battery_level }}%">{{ observation.battery_level }}%</div>
+            </div>
+            <small class="text-muted">
+                {% if observation.plugged_in %}Plugged in{% else %}Not plugged in{% endif %} &middot;
+                reported {% if observation.reported_at %}{{ observation.reported_at|timesince }} ago{% else %}at an unknown time{% endif %}
+            </small>
+            {% else %}
+            <small class="text-muted">No battery level from the car yet. Connect the car on the <a href="{% url 'tesla:dashboard' %}">Tesla page</a>.</small>
+            {% endif %}
+        </div>
+    </div>
+
+    {# Plan #}
+    {% if plan %}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="d-flex justify-content-between flex-wrap">
+                <div class="card-title">Charging plan</div>
+                {% if plan.charge_limit %}<small class="text-muted">Charge limit {{ plan.charge_limit }}%</small>{% endif %}
+            </div>
+            {% if plan.blocks %}
+            <ul class="list-unstyled mb-2">
+                {% for b in plan.blocks %}
+                <li class="mb-2">
+                    <span class="badge badge-primary badge-pill">{{ b.start|date:"D H:i" }} &ndash; {{ b.end|date:"H:i" }}</span>
+                    <small>{{ b.price|eu }} c€/kWh</small><br>
+                    <small class="text-muted">{{ b.reasons|join:"; " }}</small>
+                </li>
+                {% endfor %}
+            </ul>
+            <small class="text-muted">Expected battery after these blocks: about {{ plan.expected_final_pct|floatformat:0 }}%.</small>
+            {% else %}
+            <small class="text-muted">No charging planned{% if plan.prices_until %} up to {{ plan.prices_until|date:"D H:i" }}{% endif %}.</small>
+            {% endif %}
+
+            {% if plan.needs %}
+            <hr>
+            <ul class="list-unstyled mb-0"><small>
+            {% for r in plan.needs %}
+                <li class="mb-1">
+                    <span class="status-dot {% if r.status == 'met' %}ok{% elif r.status == 'waiting' %}warn{% else %}bad{% endif %}"></span>
+                    {{ r.need.label }}:
+                    {% if r.status == 'met' %}about {{ r.expected_pct|floatformat:0 }}% expected
+                    {% elif r.status == 'waiting' %}{{ r.expected_pct|floatformat:0 }}% so far; the rest ({{ r.quarters_later }} quarters) is planned once later prices are published
+                    {% else %}<span class="text-danger">about {{ r.shortfall_pct|floatformat:0 }}% short, not enough time to charge</span>{% endif %}
+                </li>
+            {% endfor %}
+            </small></ul>
+            {% endif %}
+        </div>
+        <div class="card-footer bg-white"><small class="text-muted">
+            Prices known until {{ plan.prices_until|date:"D H:i"|default:"?" }}. The plan isn't sent to the car yet.
+        </small></div>
+    </div>
+    {% endif %}
+
+    {# Targets #}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="card-title">Targets</div>
+            {% if targets %}
+            <ul class="list-unstyled">
+                {% for t in targets %}
+                <li class="d-flex justify-content-between align-items-center mb-1">
+                    <small>{{ t }}{% if t.source == 'calendar' %} <span class="text-muted">&middot; calendar</span>{% endif %}</small>
+                    {% if t.source == 'manual' %}
+                    <form method="post" action="{% url 'energy:delete_target' t.pk %}">{% csrf_token %}
+                        <button class="btn btn-sm btn-link text-danger p-0">Remove</button>
+                    </form>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            <form method="post" action="{% url 'energy:add_target' %}">{% csrf_token %}
+                <label for="targetPct">Battery <span id="targetPctText">{{ form.battery_pct.value }}</span>%</label>
+                <input type="range" name="battery_pct" class="form-control" id="targetPct" min="5" max="100" step="5"
+                       value="{{ form.battery_pct.value }}" oninput="document.getElementById('targetPctText').textContent = this.value">
+                <label class="mt-2" for="{{ form.deadline.id_for_label }}">Ready at</label>
+                {{ form.deadline }}
+                <div class="mt-2">{{ form.label }}</div>
+                <button class="btn btn-primary mt-2">Add target</button>
+            </form>
+        </div>
+    </div>
+
+    <a href="{% url 'energy:settings' %}" class="btn btn-outline-light btn-block mb-3">Price rule: {{ settings }}</a>
+
+</div>
+</div>
+{% endblock %}
