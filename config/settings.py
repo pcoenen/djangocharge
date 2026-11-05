@@ -148,6 +148,7 @@ CHARGE_CALENDAR_URL = env("CHARGE_CALENDAR_URL", default="")
 
 # Notifications: EMAIL_URL like smtp+tls://user:password@smtp.example.com:587
 # (consolemail:// just logs them). Nothing is sent without NOTIFY_EMAIL.
-vars().update(env.email_url("EMAIL_URL", default="consolemail://"))
+# An empty value (declared on Appliku but not set yet) also means "log only"
+vars().update(environ.Env.email_url_config(env.str("EMAIL_URL", default="") or "consolemail://"))
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="dyncharge@oraston.be")
 NOTIFY_EMAIL = env("NOTIFY_EMAIL", default="")
