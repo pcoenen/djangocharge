@@ -161,4 +161,4 @@ EMAIL_BACKEND = (
 )
 EMAIL_TIMEOUT = 30
 DEFAULT_FROM_EMAIL = env.str("DEFAULT_FROM_EMAIL", default=f"Dyncharge <{EMAIL_HOST_USER}>")
-NOTIFY_EMAIL = env("NOTIFY_EMAIL", default="")
+NOTIFY_EMAIL = env.list("NOTIFY_EMAIL", default=[])  # comma-separated

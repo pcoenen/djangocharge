@@ -366,6 +366,17 @@ class SyncTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("keeps failing", mail.outbox[0].subject)
 
+    def test_notification_goes_to_all_recipients(self):
+        from django.core import mail
+
+        from .notify import notify
+
+        with self.settings(NOTIFY_EMAIL=["a@example.com", "b@example.com"]):
+            self.assertTrue(notify("k", "Subject"))
+            self.assertFalse(notify("k", "Subject"))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["a@example.com", "b@example.com"])
+
 
 class TickSyncTests(EnergyTestCase):
     def test_tick_reads_plans_and_sends(self):

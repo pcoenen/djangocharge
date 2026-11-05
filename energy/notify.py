@@ -17,9 +17,12 @@ def notify(key, subject, body=""):
     if not created:
         return False
     logger.warning("Notification: %s", subject)
-    if settings.NOTIFY_EMAIL:
+    recipients = settings.NOTIFY_EMAIL
+    if isinstance(recipients, str):
+        recipients = [r.strip() for r in recipients.split(",") if r.strip()]
+    if recipients:
         try:
-            send_mail(f"[Dyncharge] {subject}", body or subject, None, [settings.NOTIFY_EMAIL])
+            send_mail(f"[Dyncharge] {subject}", body or subject, None, recipients)
             note.sent = True
             note.save(update_fields=["sent"])
         except Exception:  # never let a mail problem stop the charging logic
