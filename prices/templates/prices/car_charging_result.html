@@ -31,7 +31,7 @@
     {% endif %}
     {% if plan.groups and tesla_connected %}
     <form method="post" action="{% url 'tesla:send_plan' %}" class="d-inline"
-          onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Sending to car…';">
+          onsubmit="if (!confirm('This replaces ALL charge schedules on the car, also ones you made in the Tesla app. Continue?')) return false; this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Sending to car…';">
         {% csrf_token %}
         <input type="hidden" name="current_percentage" value="{{ form_data.current_percentage }}">
         <input type="hidden" name="desired_percentage" value="{{ form_data.desired_percentage }}">

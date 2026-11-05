@@ -276,44 +276,54 @@ def plan_to_schedules(groups):
 
 
 def send_charge_plan(vehicle, plan, charge_limit, deadline):
-    """Set the charge limit and replace our previous schedules with this plan's blocks."""
+    """Set the charge limit and replace ALL charge schedules on the car with this plan's blocks.
+
+    Removes every schedule on the car (also ones made in the Tesla app), plus any
+    schedules from earlier Dyncharge plans that weren't confirmed removed.
+    """
     limit = max(MIN_CHARGE_LIMIT, min(100, int(charge_limit)))
     schedules = plan_to_schedules(plan.groups)
     # Includes failed attempts: some of their schedules may have reached the car.
     # Materialized now, so the submission saved below isn't counted as "previous".
     previous = list(ChargePlanSubmission.objects.filter(vehicle=vehicle, replaced=False))
-    old_ids = [s["id"] for sub in previous for s in sub.schedules]
-
-    # Unique ids we can remove later; never reuse one, even within the same second
-    base_id = max([int(time.time())] + [i + 1 for i in old_ids])
-    for i, s in enumerate(schedules):
-        s["id"] = base_id + i
-
-    actions = [("set_charge_limit", {"percent": limit}, True)]  # fails harmlessly if already set
-    actions += [("remove_charge_schedule", {"id": i}, True) for i in old_ids]  # may have run already
-    actions += [
-        (
-            "add_charge_schedule",
-            {
-                "days_of_week": s["day"],
-                "enabled": True,
-                "lat": settings.TESLA_HOME_LAT,
-                "lon": settings.TESLA_HOME_LON,
-                "start_time": s["start_time"],
-                "end_time": s["end_time"],
-                "one_time": True,
-                "id": s["id"],
-                "name": "DynCharge",
-            },
-            False,
-        )
-        for s in schedules
-    ]
-
     submission = ChargePlanSubmission(vehicle=vehicle, charge_limit=limit, deadline=deadline, schedules=schedules)
+
     try:
         if online_state(vehicle.vin) != "online":
             wake_up(vehicle.vin)
+        try:
+            on_car = [s["id"] for s in charge_state(vehicle.vin)["schedules"] if "id" in s]
+        except TeslaError as e:
+            # Don't half-replace the planning if we can't see what's on the car
+            raise TeslaError(f"Couldn't read the charge schedules on the car, nothing was changed: {e}") from e
+
+        old_ids = sorted(set(on_car) | {s["id"] for sub in previous for s in sub.schedules})
+        # Unique new ids; never reuse one, even within the same second
+        base_id = max([int(time.time())] + [i + 1 for i in old_ids])
+        for i, s in enumerate(schedules):
+            s["id"] = base_id + i
+
+        actions = [("set_charge_limit", {"percent": limit}, True)]  # fails harmlessly if already set
+        # optional: earlier one-time schedules may already be gone
+        actions += [("remove_charge_schedule", {"id": i}, True) for i in old_ids]
+        actions += [
+            (
+                "add_charge_schedule",
+                {
+                    "days_of_week": s["day"],
+                    "enabled": True,
+                    "lat": settings.TESLA_HOME_LAT,
+                    "lon": settings.TESLA_HOME_LON,
+                    "start_time": s["start_time"],
+                    "end_time": s["end_time"],
+                    "one_time": True,
+                    "id": s["id"],
+                    "name": "DynCharge",
+                },
+                False,
+            )
+            for s in schedules
+        ]
         send_signed(vehicle.vin, actions)
     except TeslaError as e:
         submission.error = str(e)
