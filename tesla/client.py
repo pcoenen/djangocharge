@@ -9,14 +9,14 @@ import asyncio
 import base64
 import logging
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
 from django.utils import timezone
 
-from .models import ChargePlanSubmission, TeslaAccount, TeslaVehicle
+from .models import CarObservation, ChargePlanSubmission, TeslaAccount, TeslaVehicle
 
 logger = logging.getLogger(__name__)
 
@@ -164,18 +164,42 @@ def online_state(vin):
     return api("GET", f"/api/1/vehicles/{vin}")["state"]
 
 
-def charge_state(vin):
-    """Battery and schedules. Raises VehicleAsleep instead of waking the car."""
-    data = api("GET", f"/api/1/vehicles/{vin}/vehicle_data", params={"endpoints": "charge_state;charge_schedule_data"})
-    charge = data.get("charge_state") or {}
-    schedules = (data.get("charge_schedule_data") or {}).get("charge_schedules") or []
+def _parse_charge(charge):
+    ts = charge.get("timestamp")
     return {
+        "reported_at": datetime.fromtimestamp(ts / 1000, UTC) if ts else None,
         "battery_level": charge.get("battery_level"),
         "charge_limit": charge.get("charge_limit_soc"),
-        "charging_state": charge.get("charging_state"),
+        "charging_state": charge.get("charging_state") or "",
+        "charger_power": charge.get("charger_power"),
         "range_km": round(charge["battery_range"] * 1.609344) if charge.get("battery_range") else None,
-        "schedules": schedules,
     }
+
+
+def charge_state(vin):
+    """Live battery and schedules (car must be awake). Raises VehicleAsleep instead of waking it."""
+    data = api("GET", f"/api/1/vehicles/{vin}/vehicle_data", params={"endpoints": "charge_state;charge_schedule_data"})
+    schedules = (data.get("charge_schedule_data") or {}).get("charge_schedules") or []
+    return {**_parse_charge(data.get("charge_state") or {}), "schedules": schedules}
+
+
+def cached_charge_state(vin):
+    """What the car last reported to Tesla. Works while it sleeps and never wakes it."""
+    data = api("GET", f"/api/1/vehicles/{vin}/vehicle_data_cached")
+    return _parse_charge((data or {}).get("charge_state") or {})
+
+
+def observe(vehicle=None):
+    """Read the cache and store it as a CarObservation (a new row only if the report changed)."""
+    vehicle = vehicle or get_vehicle()
+    data = cached_charge_state(vehicle.vin)
+    now = timezone.now()
+    latest = vehicle.observations.first()
+    if latest and latest.same_report(data):
+        latest.checked_at = now
+        latest.save(update_fields=["checked_at"])
+        return latest
+    return CarObservation.objects.create(vehicle=vehicle, first_seen_at=now, checked_at=now, **data)
 
 
 def wake_up(vin, timeout=60):
@@ -190,19 +214,18 @@ def wake_up(vin, timeout=60):
 
 
 def car_summary(fetch=True):
-    """Best-effort info for other pages: None if no car, else name (+ battery if awake).
+    """Best-effort info for other pages: None if no car, else name + last reported battery.
 
-    Never wakes the car and never raises.
+    Reads the cache (never wakes the car) and never raises.
     """
     vehicle = TeslaVehicle.objects.select_related("account").first()
     if vehicle is None:
         return None
-    summary = {"name": str(vehicle), "battery_level": None, "state": None}
+    summary = {"name": str(vehicle), "battery_level": None, "reported_at": None}
     if fetch:
         try:
-            summary["state"] = online_state(vehicle.vin)
-            if summary["state"] == "online":
-                summary["battery_level"] = charge_state(vehicle.vin)["battery_level"]
+            obs = observe(vehicle)
+            summary["battery_level"], summary["reported_at"] = obs.battery_level, obs.reported_at
         except TeslaError as e:
             logger.info("Car summary unavailable: %s", e)
     return summary

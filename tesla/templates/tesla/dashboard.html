@@ -71,38 +71,31 @@
         {% endif %}
     </div>
 
-    {# 3. Car #}
+    {# 3. Car: last state the car reported to Tesla (cached, never wakes the car) #}
     <div class="card card-dyn">
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-center flex-wrap">
                 <div class="card-title">
-                    <span class="status-dot {% if online == 'online' %}ok{% elif online == 'asleep' %}warn{% endif %}"></span>{{ vehicle }}
-                    <small class="text-muted font-weight-normal">&middot; {{ online|default:"unknown" }}</small>
+                    <span class="status-dot {% if latest.plugged_in %}ok{% elif latest %}warn{% endif %}"></span>{{ vehicle }}
+                    {% if latest %}<small class="text-muted font-weight-normal">&middot; {% if latest.plugged_in %}plugged in{% else %}not plugged in{% endif %}</small>{% endif %}
                 </div>
-                {% if online != 'online' %}
                 <form method="post" action="{% url 'tesla:wake' %}">{% csrf_token %}
                     <button class="btn btn-sm btn-outline-secondary" title="Waking the car costs a little Fleet API credit">Wake up</button>
                 </form>
-                {% endif %}
             </div>
-            {% if charge %}
+            {% if latest.battery_level is not None %}
             <div class="battery mt-3">
-                <div class="battery-fill" style="width: {{ charge.battery_level|default:0 }}%">{{ charge.battery_level }}%</div>
+                <div class="battery-fill" style="width: {{ latest.battery_level }}%">{{ latest.battery_level }}%</div>
             </div>
             <div class="d-flex justify-content-between mt-1"><small class="text-muted">
-                {{ charge.charging_state|default:"" }}{% if charge.range_km %} &middot; {{ charge.range_km }} km{% endif %}
-            </small><small class="text-muted">Limit {{ charge.charge_limit }}%</small></div>
-            {% if charge.schedules %}
-            <div class="mt-3"><small class="font-weight-bold">Charge schedules on the car</small>
-                <ul class="mb-0 pl-3"><small>
-                {% for s in charge.schedules %}
-                    <li>{{ s.name|default:"Schedule" }}{% if s.one_time %} (once){% endif %}: {% if s.start_enabled %}{{ s.start_time|hhmm }}{% else %}&hellip;{% endif %} &ndash; {% if s.end_enabled %}{{ s.end_time|hhmm }}{% else %}&hellip;{% endif %}{% if not s.enabled %} &middot; disabled{% endif %}</li>
-                {% endfor %}
-                </small></ul>
-            </div>
-            {% endif %}
-            {% elif online and online != 'online' %}
-            <p class="mb-0 mt-2"><small class="text-muted">The car is {{ online }}; battery info appears when it's awake. Dyncharge doesn't wake it unless you ask.</small></p>
+                {{ latest.charging_state }}{% if latest.charging_state == "Charging" and latest.charger_power %} at {{ latest.charger_power }} kW{% endif %}{% if latest.range_km %} &middot; {{ latest.range_km }} km{% endif %}
+            </small><small class="text-muted">Limit {{ latest.charge_limit }}%</small></div>
+            <p class="mb-0 mt-2"><small class="text-muted">
+                {% if latest.reported_at %}Reported by the car {{ latest.reported_at|timesince }} ago ({{ latest.reported_at|date:"D H:i" }}).{% endif %}
+                The car only reports while awake; while asleep the battery level hardly changes.
+            </small></p>
+            {% else %}
+            <p class="mb-0 mt-2"><small class="text-muted">No battery data reported by the car yet.</small></p>
             {% endif %}
         </div>
     </div>
@@ -113,7 +106,30 @@
     {% endif %}
     {% endif %}
 
-    {# 4. Recent plans #}
+    {# 4. Observation log #}
+    {% if observations %}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="card-title mb-2">Battery log</div>
+            <small class="text-muted d-block mb-2">Checked every 30 minutes from Tesla's cache; a new line only when the car reported something new.</small>
+            <div class="table-responsive"><table class="table table-sm small mb-0">
+                <thead><tr><th>Reported</th><th>Battery</th><th>State</th><th>Still current at</th></tr></thead>
+                <tbody>
+                {% for o in observations %}
+                <tr>
+                    <td>{{ o.reported_at|date:"D d/m H:i"|default:"?" }}</td>
+                    <td>{{ o.battery_level }}%{% if o.delta %} <span class="{% if o.delta > 0 %}text-success{% else %}text-danger{% endif %}">({% if o.delta > 0 %}+{% endif %}{{ o.delta }})</span>{% endif %}</td>
+                    <td>{{ o.charging_state|default:"?" }}</td>
+                    <td>{{ o.checked_at|date:"D H:i" }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# 5. Recent plans #}
     {% if submissions %}
     <div class="card card-dyn">
         <div class="card-body">

@@ -1,15 +1,17 @@
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from types import SimpleNamespace
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
+from django.core.management import CommandError, call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from . import client
-from .models import ChargePlanSubmission, TeslaAccount, TeslaVehicle
+from .models import CarObservation, ChargePlanSubmission, TeslaAccount, TeslaVehicle
 
 BRUSSELS = ZoneInfo("Europe/Brussels")
 VIN = "5YJ3E7EB0KF000001"
@@ -260,43 +262,97 @@ class SignedCommandTests(TeslaTestCase):
         self.assertEqual(results, [("set_charge_limit", {"response": {"result": True, "percent": 80}})])
 
 
+CACHED = {
+    "charge_state": {
+        "timestamp": 1793952000000,  # 2026-11-06 08:00 UTC
+        "battery_level": 64,
+        "charge_limit_soc": 80,
+        "charging_state": "Stopped",
+        "battery_range": 186.4,
+        "charger_power": 0,
+    }
+}
+
+
+class ObservationTests(TeslaTestCase):
+    @mock.patch("tesla.client.requests.request", return_value=response(data={"response": CACHED}))
+    def test_reads_cache_and_stores_observation(self, request):
+        _, vehicle = make_account()
+        obs = client.observe()
+        self.assertTrue(request.call_args.args[1].endswith(f"/api/1/vehicles/{VIN}/vehicle_data_cached"))
+        self.assertEqual((obs.battery_level, obs.charge_limit, obs.charging_state), (64, 80, "Stopped"))
+        self.assertEqual(obs.reported_at, datetime(2026, 11, 6, 8, 0, tzinfo=UTC))
+        self.assertEqual(obs.range_km, 300)
+        self.assertTrue(obs.plugged_in)
+
+    @mock.patch("tesla.client.cached_charge_state")
+    def test_same_report_only_moves_checked_at(self, cached):
+        _, vehicle = make_account()
+        report = client._parse_charge(CACHED["charge_state"])
+        cached.return_value = report
+        first = client.observe()
+        second = client.observe()
+        self.assertEqual(first.pk, second.pk)
+        self.assertGreaterEqual(second.checked_at, first.checked_at)
+        cached.return_value = {**report, "reported_at": report["reported_at"] + timedelta(hours=2), "battery_level": 51,
+                               "charging_state": "Disconnected"}
+        third = client.observe()
+        self.assertNotEqual(third.pk, first.pk)
+        self.assertFalse(third.plugged_in)
+        self.assertEqual(vehicle.observations.count(), 2)
+
+    def test_tick_never_wakes_or_commands(self):
+        make_account()
+        with mock.patch("tesla.client.requests.request", return_value=response(data={"response": CACHED})) as request, \
+                mock.patch("tesla.client.wake_up") as wake, mock.patch("tesla.client.send_signed") as send:
+            call_command("energy_tick", stdout=StringIO())
+        self.assertEqual(request.call_count, 1)
+        wake.assert_not_called()
+        send.assert_not_called()
+        self.assertEqual(CarObservation.objects.get().battery_level, 64)
+
+    def test_tick_without_tesla_is_skipped(self):
+        out = StringIO()
+        call_command("energy_tick", stdout=out)
+        self.assertIn("Skipped", out.getvalue())
+
+    @mock.patch("tesla.client.requests.request", return_value=response(404, {"error": "no cached data"}))
+    def test_tick_reports_errors(self, _):
+        make_account()
+        with self.assertRaises(CommandError):
+            call_command("energy_tick", stdout=StringIO())
+
+
 class DashboardTests(TeslaTestCase):
     def test_not_connected(self):
         r = self.client.get("/tesla/")
         self.assertContains(r, "Connect Tesla")
 
-    @mock.patch("tesla.client.charge_state")
-    @mock.patch("tesla.client.online_state", return_value="online")
+    @mock.patch("tesla.client.cached_charge_state", return_value=client._parse_charge(CACHED["charge_state"]))
     @mock.patch("tesla.client.fleet_status", return_value={"key_paired": False, "firmware": None, "signing_required": True})
-    def test_connected_unpaired(self, *_):
+    def test_connected_unpaired_shows_cached_battery(self, *_):
         make_account()
-        client.charge_state.return_value = {
-            "battery_level": 64,
-            "charge_limit": 80,
-            "charging_state": "Stopped",
-            "range_km": 300,
-            "schedules": [{"name": "DynCharge", "start_time": 60, "end_time": 180, "start_enabled": True, "end_enabled": True, "one_time": True, "enabled": True}],
-        }
-        r = self.client.get("/tesla/")
+        with mock.patch("tesla.client.wake_up") as wake, mock.patch("tesla.client.charge_state") as live:
+            r = self.client.get("/tesla/")
+        wake.assert_not_called()
+        live.assert_not_called()
         self.assertContains(r, "Add virtual key")
         self.assertContains(r, "https://tesla.com/_ak/dyncharge.oraston.be")
         self.assertContains(r, "64%")
-        self.assertContains(r, "01:00 &ndash; 03:00")
+        self.assertContains(r, "plugged in")
+        self.assertContains(r, "Battery log")
 
-    @mock.patch("tesla.client.online_state", return_value="asleep")
+    @mock.patch("tesla.client.cached_charge_state", side_effect=client.TeslaError("boom"))
     @mock.patch("tesla.client.fleet_status", return_value={"key_paired": True, "firmware": "2026.38", "signing_required": True})
-    def test_asleep_car_is_not_woken(self, *_):
+    def test_cache_error_is_shown(self, *_):
         make_account()
-        with mock.patch("tesla.client.wake_up") as wake, mock.patch("tesla.client.charge_state") as charge:
-            r = self.client.get("/tesla/")
-        wake.assert_not_called()
-        charge.assert_not_called()
-        self.assertContains(r, "Wake up")
+        r = self.client.get("/tesla/")
+        self.assertContains(r, "Couldn&#x27;t read the car&#x27;s cached state")
+        self.assertContains(r, "No battery data")
 
 
 class CarChargingIntegrationTests(TeslaTestCase):
-    @mock.patch("tesla.client.charge_state", return_value={"battery_level": 37})
-    @mock.patch("tesla.client.online_state", return_value="online")
+    @mock.patch("tesla.client.cached_charge_state", return_value={**client._parse_charge(CACHED["charge_state"]), "battery_level": 37})
     def test_battery_level_is_prefilled(self, *_):
         make_account()
         r = self.client.get("/car-charging/")

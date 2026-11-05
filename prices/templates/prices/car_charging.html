@@ -8,8 +8,8 @@
         {% csrf_token %}
         {% if car %}
         <div class="alert alert-light py-2">
-            {% if car.battery_level is not None %}{{ car.name }} is at <strong>{{ car.battery_level }}%</strong> &mdash; filled in below.
-            {% else %}{{ car.name }} is {{ car.state|default:"unreachable" }}; set the current battery level yourself.{% endif %}
+            {% if car.battery_level is not None %}{{ car.name }} is at <strong>{{ car.battery_level }}%</strong>{% if car.reported_at %} <small class="text-muted">(reported {{ car.reported_at|timesince }} ago)</small>{% endif %} &mdash; filled in below.
+            {% else %}No recent battery level from {{ car.name }}; set the current battery level yourself.{% endif %}
         </div>
         {% endif %}
         {% if form.errors %}<div class="alert alert-danger">{{ form.errors }}</div>{% endif %}

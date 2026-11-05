@@ -15,8 +15,17 @@ def _configured():
     return bool(settings.TESLA_CLIENT_ID and settings.TESLA_CLIENT_SECRET and settings.TESLA_PRIVATE_KEY_B64)
 
 
+def _with_changes(observations):
+    """Attach the battery change versus the previous (older) report to each observation."""
+    for newer, older in zip(observations, observations[1:] + [None]):
+        newer.delta = None
+        if older and newer.battery_level is not None and older.battery_level is not None:
+            newer.delta = newer.battery_level - older.battery_level
+    return observations
+
+
 def dashboard(request):
-    """Connection status: account, virtual key, car state. Never wakes the car."""
+    """Connection status: account, virtual key, last reported car state. Never wakes the car."""
     ctx = {
         "configured": _configured(),
         "account": TeslaAccount.objects.first(),
@@ -30,13 +39,14 @@ def dashboard(request):
     if ctx["account"] and vehicle:
         try:
             ctx["fleet"] = client.fleet_status(vehicle.vin)
-            ctx["online"] = client.online_state(vehicle.vin)
-            if ctx["online"] == "online":
-                ctx["charge"] = client.charge_state(vehicle.vin)
-        except client.VehicleAsleep:
-            ctx["online"] = "asleep"
         except client.TeslaError as e:
             ctx["errors"].append(str(e))
+        try:
+            client.observe(vehicle)
+        except client.TeslaError as e:
+            ctx["errors"].append(f"Couldn't read the car's cached state: {e}")
+        ctx["observations"] = _with_changes(list(vehicle.observations.all()[:20]))
+        ctx["latest"] = ctx["observations"][0] if ctx["observations"] else None
     return render(request, "tesla/dashboard.html", ctx)
 
 

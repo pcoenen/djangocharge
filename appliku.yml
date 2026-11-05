@@ -44,8 +44,12 @@ cronjobs:
     # Day-ahead prices are published around 13:00 Belgian time. Cron runs in UTC:
     # 13:00 UTC = 14:00 CET (winter) / 15:00 CEST (summer). If prices are late,
     # the pages still fetch them on demand.
-    schedule: "0 13 * * *"
+    schedule: "0 14 * * *"
     command: python manage.py fetch_prices
+  energytick:
+    # Reads the car's cached battery state; never wakes the car.
+    schedule: "*/30 * * * *"
+    command: python manage.py energy_tick
 
 commands:
   - python manage.py migrate
