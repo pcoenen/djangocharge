@@ -24,6 +24,12 @@ build_settings:
       source: manual
     - name: TESLA_HOME_LON
       source: manual
+    - name: CHARGE_CALENDAR_URL
+      source: manual
+    - name: EMAIL_URL
+      source: manual
+    - name: NOTIFY_EMAIL
+      source: manual
     - name: DJANGO_SUPERUSER_USERNAME
       source: manual
     - name: DJANGO_SUPERUSER_PASSWORD

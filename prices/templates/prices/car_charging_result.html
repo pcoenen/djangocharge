@@ -30,14 +30,12 @@
         {% endif %}
     {% endif %}
     {% if plan.groups and tesla_connected %}
-    <form method="post" action="{% url 'tesla:send_plan' %}" class="d-inline"
-          onsubmit="if (!confirm('This replaces ALL charge schedules on the car, also ones you made in the Tesla app. Continue?')) return false; this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Sending to car…';">
+    <form method="post" action="{% url 'energy:add_target' %}" class="d-inline">
         {% csrf_token %}
-        <input type="hidden" name="current_percentage" value="{{ form_data.current_percentage }}">
-        <input type="hidden" name="desired_percentage" value="{{ form_data.desired_percentage }}">
-        <input type="hidden" name="day" value="{{ form_data.day }}">
-        <input type="hidden" name="hour" value="{{ form_data.hour }}">
-        <button class="btn btn-success">Send to {{ tesla_connected.name }}</button>
+        <input type="hidden" name="battery_pct" value="{{ form_data.desired_percentage }}">
+        <input type="hidden" name="deadline" value="{{ deadline|date:'Y-m-d\TH:i' }}">
+        <input type="hidden" name="label" value="">
+        <button class="btn btn-success" title="The energy manager then plans it together with everything else and sends it to {{ tesla_connected.name }}">Add as target</button>
     </form>
     {% endif %}
     <a href="{% url 'prices:car_charging' %}" class="btn btn-primary">Back</a>

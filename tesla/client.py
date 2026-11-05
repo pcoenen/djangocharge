@@ -35,6 +35,10 @@ class VehicleAsleep(TeslaError):
     pass
 
 
+class AuthError(TeslaError):
+    """The Tesla login no longer works (refresh token expired or revoked): reconnect."""
+
+
 # --- OAuth -------------------------------------------------------------------
 
 
@@ -59,7 +63,8 @@ def _token_request(data):
         timeout=30,
     )
     if not resp.ok:
-        raise TeslaError(f"Token request failed ({resp.status_code}): {resp.text[:300]}")
+        cls = AuthError if resp.status_code in (400, 401, 403) else TeslaError
+        raise cls(f"Token request failed ({resp.status_code}): {resp.text[:300]}")
     return resp.json()
 
 
@@ -298,18 +303,25 @@ def plan_to_schedules(groups):
     return schedules
 
 
-def send_charge_plan(vehicle, plan, charge_limit, deadline):
-    """Set the charge limit and replace ALL charge schedules on the car with this plan's blocks.
+def send_charge_plan(vehicle, groups, charge_limit, deadline=None, trigger="manual", reason=""):
+    """Set the charge limit and replace ALL charge schedules on the car with these blocks.
 
-    Removes every schedule on the car (also ones made in the Tesla app), plus any
-    schedules from earlier Dyncharge plans that weren't confirmed removed.
+    `groups` are [{"start", "end"}] aware datetimes; an empty list just clears
+    the schedules. Removes every schedule on the car (also ones made in the
+    Tesla app), plus any schedules from earlier Dyncharge plans that weren't
+    confirmed removed.
     """
     limit = max(MIN_CHARGE_LIMIT, min(100, int(charge_limit)))
-    schedules = plan_to_schedules(plan.groups)
+    tz = timezone.get_current_timezone()
+    schedules = plan_to_schedules(
+        [{"start": g["start"].astimezone(tz), "end": g["end"].astimezone(tz)} for g in groups]
+    )
     # Includes failed attempts: some of their schedules may have reached the car.
     # Materialized now, so the submission saved below isn't counted as "previous".
     previous = list(ChargePlanSubmission.objects.filter(vehicle=vehicle, replaced=False))
-    submission = ChargePlanSubmission(vehicle=vehicle, charge_limit=limit, deadline=deadline, schedules=schedules)
+    submission = ChargePlanSubmission(
+        vehicle=vehicle, charge_limit=limit, deadline=deadline, schedules=schedules, trigger=trigger, reason=reason[:300]
+    )
 
     try:
         if online_state(vehicle.vin) != "online":

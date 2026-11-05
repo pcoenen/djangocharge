@@ -71,3 +71,19 @@ class PlanSnapshot(models.Model):
 
     def __str__(self):
         return f"Plan {self.created_at:%Y-%m-%d %H:%M} ({len(self.blocks)} blocks)"
+
+
+class Notification(models.Model):
+    """An email sent (or that would have been sent), so each problem is reported only once."""
+
+    key = models.CharField(max_length=300, unique=True)
+    subject = models.CharField(max_length=300)
+    body = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.subject

@@ -141,3 +141,13 @@ TESLA_PRIVATE_KEY_B64 = env("TESLA_PRIVATE_KEY_B64", default="")
 # Charge schedules only apply at this location (home)
 TESLA_HOME_LAT = env.float("TESLA_HOME_LAT", default=0.0)
 TESLA_HOME_LON = env.float("TESLA_HOME_LON", default=0.0)
+
+# --- Energy manager ---------------------------------------------------------------
+# .ics link whose events need the car at 40% half an hour before they start (phase 4)
+CHARGE_CALENDAR_URL = env("CHARGE_CALENDAR_URL", default="")
+
+# Notifications: EMAIL_URL like smtp+tls://user:password@smtp.example.com:587
+# (consolemail:// just logs them). Nothing is sent without NOTIFY_EMAIL.
+vars().update(env.email_url("EMAIL_URL", default="consolemail://"))
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="dyncharge@oraston.be")
+NOTIFY_EMAIL = env("NOTIFY_EMAIL", default="")

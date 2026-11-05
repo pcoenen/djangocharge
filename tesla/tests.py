@@ -147,7 +147,7 @@ class SendPlanTests(TeslaTestCase):
         super().setUp()
         self.account, self.vehicle = make_account()
         start = datetime(2026, 11, 5, 1, 0, tzinfo=BRUSSELS)
-        self.plan = SimpleNamespace(groups=[group(start, start + timedelta(hours=2))])
+        self.groups = [group(start, start + timedelta(hours=2))]
         self.deadline = datetime(2026, 11, 5, 7, 0, tzinfo=BRUSSELS)
         patcher = mock.patch("tesla.client.charge_state", return_value=car_schedules())
         self.charge_state = patcher.start()
@@ -156,7 +156,7 @@ class SendPlanTests(TeslaTestCase):
     @mock.patch("tesla.client.online_state", return_value="online")
     @mock.patch("tesla.client.send_signed")
     def test_sends_limit_and_one_time_schedules(self, send, _):
-        sub = client.send_charge_plan(self.vehicle, self.plan, 80, self.deadline)
+        sub = client.send_charge_plan(self.vehicle, self.groups, 80, self.deadline)
         vin, actions = send.call_args.args
         self.assertEqual(vin, VIN)
         self.assertEqual(actions[0], ("set_charge_limit", {"percent": 80}, True))
@@ -175,7 +175,7 @@ class SendPlanTests(TeslaTestCase):
     def test_removes_all_schedules_on_the_car_first(self, send, _):
         # 7 and 9 were made in the Tesla app, not by Dyncharge
         self.charge_state.return_value = car_schedules(7, 9)
-        client.send_charge_plan(self.vehicle, self.plan, 80, self.deadline)
+        client.send_charge_plan(self.vehicle, self.groups, 80, self.deadline)
         names = [a[0] for a in send.call_args.args[1]]
         removed = [a[1]["id"] for a in send.call_args.args[1] if a[0] == "remove_charge_schedule"]
         self.assertEqual(removed, [7, 9])
@@ -185,9 +185,9 @@ class SendPlanTests(TeslaTestCase):
     @mock.patch("tesla.client.online_state", return_value="online")
     @mock.patch("tesla.client.send_signed")
     def test_replaces_previous_schedules_and_clamps_limit(self, send, _):
-        first = client.send_charge_plan(self.vehicle, self.plan, 90, self.deadline)
+        first = client.send_charge_plan(self.vehicle, self.groups, 90, self.deadline)
         # the car no longer reports it (e.g. read before it synced), we still remove it
-        client.send_charge_plan(self.vehicle, self.plan, 30, self.deadline)
+        client.send_charge_plan(self.vehicle, self.groups, 30, self.deadline)
         actions = send.call_args.args[1]
         self.assertEqual(actions[0][1], {"percent": 50})  # Tesla minimum
         self.assertIn(("remove_charge_schedule", {"id": first.schedules[0]["id"]}, True), actions)
@@ -199,7 +199,7 @@ class SendPlanTests(TeslaTestCase):
     def test_new_ids_never_clash_with_existing_ones(self, send, _):
         far_future_id = int(datetime(2030, 1, 1).timestamp())
         self.charge_state.return_value = car_schedules(far_future_id)
-        sub = client.send_charge_plan(self.vehicle, self.plan, 80, self.deadline)
+        sub = client.send_charge_plan(self.vehicle, self.groups, 80, self.deadline)
         self.assertGreater(sub.schedules[0]["id"], far_future_id)
 
     @mock.patch("tesla.client.online_state", return_value="online")
@@ -207,7 +207,7 @@ class SendPlanTests(TeslaTestCase):
     def test_nothing_is_changed_if_schedules_cant_be_read(self, send, _):
         self.charge_state.side_effect = client.VehicleAsleep("asleep")
         with self.assertRaises(client.TeslaError):
-            client.send_charge_plan(self.vehicle, self.plan, 80, self.deadline)
+            client.send_charge_plan(self.vehicle, self.groups, 80, self.deadline)
         send.assert_not_called()
         sub = ChargePlanSubmission.objects.get()
         self.assertFalse(sub.succeeded)
@@ -218,7 +218,7 @@ class SendPlanTests(TeslaTestCase):
     @mock.patch("tesla.client.send_signed", side_effect=client.TeslaError("add_charge_schedule failed: denied"))
     def test_failure_is_recorded_and_car_is_woken(self, send, _, wake):
         with self.assertRaises(client.TeslaError):
-            client.send_charge_plan(self.vehicle, self.plan, 80, self.deadline)
+            client.send_charge_plan(self.vehicle, self.groups, 80, self.deadline)
         wake.assert_called_once_with(VIN)
         sub = ChargePlanSubmission.objects.get()
         self.assertFalse(sub.succeeded)
@@ -371,4 +371,4 @@ class CarChargingIntegrationTests(TeslaTestCase):
         r = self.client.post(
             "/car-charging/", {"current_percentage": 60, "desired_percentage": 70, "day": "tomorrow", "hour": "23:00"}
         )
-        self.assertContains(r, "Send to Model 3")
+        self.assertContains(r, "Add as target")

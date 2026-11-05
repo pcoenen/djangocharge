@@ -8,7 +8,9 @@ from django.views.decorators.http import require_POST
 
 from prices.views import _ensure_upcoming_prices
 
-from . import manager
+from tesla.models import TeslaVehicle
+
+from . import manager, sync
 from .models import ChargeTarget, EnergySettings, PlanSnapshot
 
 
@@ -51,13 +53,21 @@ def plan(request):
     _ensure_upcoming_prices()
     now = timezone.now()
     default_deadline = timezone.localtime(now).replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    plan = manager.build_plan(now)
+    vehicle = TeslaVehicle.objects.first()
+    decision = sync.decide(plan, vehicle, manager.latest_observation(), now) if plan and vehicle else None
+    on_car = sync.on_car(vehicle) if vehicle else None
     return render(request, "energy/plan.html", {
-        "plan": manager.build_plan(now),
+        "plan": plan,
+        "decision": decision,
+        "on_car": on_car,
+        "on_car_blocks": sync._submission_blocks(on_car) if on_car else [],
         "observation": manager.latest_observation(),
         "targets": ChargeTarget.objects.filter(deadline__gt=now),
         "form": TargetForm(initial={"deadline": default_deadline}),
         "settings": EnergySettings.load(),
         "snapshots": PlanSnapshot.objects.all()[:5],
+        "max_sends": sync.MAX_SENDS_PER_DAY,
     })
 
 

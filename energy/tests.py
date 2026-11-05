@@ -3,7 +3,7 @@ from io import StringIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
 
@@ -229,3 +229,164 @@ class TickTests(EnergyTestCase):
         call_command("energy_tick", stdout=out)
         self.assertIn("Car not read", out.getvalue())
         self.assertIn("nothing to plan", out.getvalue())
+
+
+class SyncTests(TestCase):
+    """Sync decisions; times are around 2026-11-10 (UTC)."""
+
+    def setUp(self):
+        account = TeslaAccount.objects.create(access_token="a", refresh_token="r", expires_at=T0 + timedelta(days=9))
+        self.vehicle = TeslaVehicle.objects.create(account=account, vin="VIN1", name="Model 3")
+        self.obs = CarObservation(vehicle=self.vehicle, battery_level=50, charging_state="Stopped")
+        # Night: expensive until 01:00 UTC, cheap 01:00-03:00, deadline 06:00
+        self.night = T0.replace(hour=0)
+        prices = [50] * 4 + [1] * 8 + [50] * 12
+        self.slots = slots(prices, start=self.night)
+        self.need = Need(self.night + timedelta(hours=6), 55, "55% target")
+
+    def plan(self, now, need=None):
+        return make_plan(50, self.slots, [need or self.need], now=now, pct_per_quarter=1)
+
+    def sent(self, plan, limit=None, ok=True, trigger="auto", created=None):
+        from tesla.models import ChargePlanSubmission
+
+        sub = ChargePlanSubmission.objects.create(
+            vehicle=self.vehicle, charge_limit=limit or plan.charge_limit, succeeded=ok, trigger=trigger,
+            schedules=[{"start": b.start.isoformat(), "end": b.end.isoformat()} for b in plan.blocks],
+        )
+        if created:
+            ChargePlanSubmission.objects.filter(pk=sub.pk).update(created_at=created)
+        return sub
+
+    def test_waits_until_an_hour_before_the_first_quarter(self):
+        from . import sync
+
+        early = self.night - timedelta(hours=3)
+        d = sync.decide(self.plan(early), self.vehicle, self.obs, early)
+        self.assertEqual(d.action, sync.WAIT)
+        self.assertEqual(d.send_at, self.night)  # charging starts 01:00 -> send at 00:00
+        self.assertTrue(d.must)
+        at = self.night + timedelta(seconds=5)  # the 00:00 cron run
+        self.assertEqual(sync.decide(self.plan(at), self.vehicle, self.obs, at).action, sync.SEND)
+        half_hour_before = self.night - timedelta(minutes=30)
+        self.assertEqual(sync.decide(self.plan(half_hour_before), self.vehicle, self.obs, half_hour_before).action,
+                         sync.WAIT)
+
+    def test_nothing_planned_and_never_sent_doesnt_wake(self):
+        from . import sync
+
+        plan = make_plan(50, self.slots, [], now=self.night, pct_per_quarter=1)
+        self.assertEqual(sync.decide(plan, self.vehicle, self.obs, self.night).action, sync.IN_SYNC)
+
+    def test_in_sync_after_sending(self):
+        from . import sync
+
+        plan = self.plan(self.night)
+        self.sent(plan)
+        self.assertEqual(sync.decide(plan, self.vehicle, self.obs, self.night).action, sync.IN_SYNC)
+        # later, during the block, the passed quarters don't count as differences
+        later = self.night + timedelta(hours=1, minutes=20)  # one quarter charged: 51%
+        replanned = make_plan(51, self.slots, [self.need], now=later, pct_per_quarter=1)
+        self.assertEqual(sync.decide(replanned, self.vehicle, self.obs, later).action, sync.IN_SYNC)
+
+    def test_extra_quarters_at_the_end_are_ignored(self):
+        """Charged a bit faster than estimated: the car stops at its limit anyway."""
+        from . import sync
+
+        plan = self.plan(self.night)
+        self.sent(plan)
+        fuller = make_plan(51, self.slots, [self.need], now=self.night, pct_per_quarter=1)
+        self.assertEqual(sync.decide(fuller, self.vehicle, self.obs, self.night).action, sync.IN_SYNC)
+
+    def test_more_needed_after_driving(self):
+        from . import sync
+
+        self.sent(self.plan(self.night))
+        emptier = make_plan(45, self.slots, [self.need], now=self.night, pct_per_quarter=1)
+        d = sync.decide(emptier, self.vehicle, self.obs, self.night)
+        self.assertEqual(d.action, sync.SEND)
+        self.assertTrue(d.must)
+
+    def test_unplugged_car_isnt_woken_and_is_reported(self):
+        from . import sync
+        from .models import Notification
+
+        self.obs.charging_state = "Disconnected"
+        with mock.patch("tesla.client.send_charge_plan") as send:
+            d, sub = sync.sync(self.plan(self.night), self.vehicle, self.obs, self.night)
+        send.assert_not_called()
+        self.assertEqual(d.action, sync.UNPLUGGED)
+        self.assertIn("Plug in", Notification.objects.get().subject)
+
+    def test_daily_budget(self):
+        from . import sync
+
+        for _ in range(sync.MAX_SENDS_PER_DAY):
+            self.sent(make_plan(50, self.slots, [], now=self.night, pct_per_quarter=1), limit=50,
+                      created=self.night - timedelta(hours=2))
+        d = sync.decide(self.plan(self.night), self.vehicle, self.obs, self.night)
+        self.assertEqual(d.action, sync.BUDGET)
+
+    def test_sync_sends_blocks_and_limit(self):
+        from . import sync
+
+        plan = self.plan(self.night)
+        with mock.patch("tesla.client.send_charge_plan") as send:
+            d, _ = sync.sync(plan, self.vehicle, self.obs, self.night)
+        self.assertEqual(d.action, sync.SEND)
+        vehicle, groups, limit = send.call_args.args
+        self.assertEqual(limit, 55)
+        self.assertEqual(groups, [{"start": self.night + timedelta(hours=1), "end": self.night + timedelta(hours=2, minutes=15)}])
+        self.assertEqual(send.call_args.kwargs["trigger"], "auto")
+
+    def test_limit_below_tesla_minimum_is_raised(self):
+        from . import sync
+
+        need = Need(self.night + timedelta(hours=6), 40, "calendar 40%")
+        plan = make_plan(30, self.slots, [need], now=self.night, pct_per_quarter=1)
+        self.assertEqual(sync.desired_limit(plan), 50)
+
+    def test_repeated_failures_are_emailed_once(self):
+        from tesla import client
+
+        from . import sync
+        from .models import Notification
+
+        def fail(vehicle, *args, **kwargs):
+            self.sent(self.plan(self.night), ok=False)
+            raise client.TeslaError("denied")
+
+        with mock.patch("tesla.client.send_charge_plan", side_effect=fail), self.settings(NOTIFY_EMAIL="me@example.com"):
+            for _ in range(3):
+                with self.assertRaises(client.TeslaError):
+                    sync.sync(self.plan(self.night), self.vehicle, self.obs, self.night)
+        from django.core import mail
+
+        self.assertEqual(Notification.objects.count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("keeps failing", mail.outbox[0].subject)
+
+
+class TickSyncTests(EnergyTestCase):
+    def test_tick_reads_plans_and_sends(self):
+        self.observe(50)
+        ChargeTarget.objects.create(battery_pct=60, deadline=self.now + timedelta(minutes=90))
+        out = StringIO()
+        with mock.patch("tesla.client.cached_charge_state", side_effect=lambda vin: {
+            "reported_at": self.now, "battery_level": 50, "charging_state": "Stopped", "charge_limit": 80,
+            "charger_power": 0, "range_km": 250}), \
+                mock.patch("tesla.client.send_charge_plan") as send:
+            call_command("energy_tick", stdout=out)
+        self.assertIn("sent to the car", out.getvalue())
+        send.assert_called_once()
+
+    def test_expired_login_is_reported(self):
+        from tesla import client
+
+        from .models import Notification
+
+        self.observe(50)
+        with mock.patch("tesla.client.cached_charge_state", side_effect=client.AuthError("Token request failed (401)")):
+            with self.assertRaises(CommandError):
+                call_command("energy_tick", stdout=StringIO(), stderr=StringIO())
+        self.assertIn("Reconnect Tesla", Notification.objects.get().subject)

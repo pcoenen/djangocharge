@@ -82,7 +82,8 @@ class Plan:
 
 
 def make_plan(battery_pct, slots, needs, *, now, pct_per_quarter):
-    slots = sorted((s for s in slots if s.start >= now), key=lambda s: s.start)
+    # The running quarter counts: a block in progress shouldn't be cut off
+    slots = sorted((s for s in slots if s.end > now), key=lambda s: s.start)
     prices_until = slots[-1].end if slots else None
     reasons = {i: [s.cheap] for i, s in enumerate(slots) if s.cheap}
 

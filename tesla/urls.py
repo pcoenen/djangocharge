@@ -11,5 +11,4 @@ urlpatterns = [
     path("disconnect/", views.disconnect, name="disconnect"),
     path("vehicles/refresh/", views.refresh_vehicles, name="refresh_vehicles"),
     path("wake/", views.wake, name="wake"),
-    path("send-plan/", views.send_plan, name="send_plan"),
 ]

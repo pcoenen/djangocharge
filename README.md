@@ -20,7 +20,19 @@ python manage.py test prices
 - `/prices/?date=YYYY-MM-DD` – quarter-hourly consumption/injection price (c€/kWh), coloured by the
   quartiles of the previous 30 days
 - `/dishwasher/` – relative cost of starting now, in 3, 6 or 9 hours
-- `/car-charging/` – cheapest quarters to charge before a deadline
+- `/car-charging/` – cheapest quarters to charge before a deadline (can be added as a target)
+- `/energy/` – the energy manager: battery, targets and the combined charging plan with reasons
+- `/energy/settings/` – price rule: always charge below a fixed price, the 30-day 25% mark or median
+- `/tesla/` – Tesla connection, virtual key and battery log
+
+## Energy manager
+
+`python manage.py energy_tick` runs every 30 minutes (cron). It reads the car's battery from
+Tesla's cache (never wakes the car), re-plans (price rule first, then each target's shortfall with
+the cheapest quarters before its deadline) and, one hour before the first quarter that differs
+from what's on the car, wakes the car and replaces its charge schedules and limit. A car that
+isn't plugged in isn't woken; at most 6 sends a day. Problems are emailed once to `NOTIFY_EMAIL`
+via `EMAIL_URL` (e.g. `smtp+tls://user:password@host:587`).
 
 ## Energy contracts
 
@@ -48,5 +60,6 @@ Prices are fetched on demand when a day is missing, and by the `fetch_prices` cr
 ## Deployment (Appliku)
 
 `appliku.yml` defines the build, `run.sh` (gunicorn), `release.sh` (migrations), a PostgreSQL 17
-database (`DATABASE_URL`), and an hourly `fetch_prices` cron job. Set `SECRET_KEY` and
-`ENTSOE_TOKEN` as config vars; `ALLOWED_HOSTS` comes from the app's domains.
+database (`DATABASE_URL`), a daily `fetch_prices` and a 30-minute `energy_tick` cron job. Set
+`SECRET_KEY`, `ENTSOE_TOKEN`, the `TESLA_*` vars, `CHARGE_CALENDAR_URL`, `EMAIL_URL` and
+`NOTIFY_EMAIL` as config vars; `ALLOWED_HOSTS` comes from the app's domains.

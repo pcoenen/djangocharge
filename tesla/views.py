@@ -5,8 +5,6 @@ from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
-from prices.views import CarChargingForm, plan_from_form
-
 from . import client
 from .models import ChargePlanSubmission, TeslaAccount, TeslaVehicle
 
@@ -97,26 +95,4 @@ def wake(request):
         messages.success(request, "The car is awake.")
     except client.TeslaError as e:
         messages.error(request, str(e))
-    return redirect("tesla:dashboard")
-
-
-@require_POST
-def send_plan(request):
-    form = CarChargingForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Invalid charge plan; please calculate it again.")
-        return redirect("prices:car_charging")
-    plan, deadline = plan_from_form(form.cleaned_data)
-    if not plan.groups:
-        messages.error(request, "There are no charging hours to send.")
-        return redirect("prices:car_charging")
-    try:
-        submission = client.send_charge_plan(
-            client.get_vehicle(), plan, form.cleaned_data["desired_percentage"], deadline
-        )
-    except client.TeslaError as e:
-        messages.error(request, f"Sending the plan to the car failed: {e}")
-        return redirect("tesla:dashboard")
-    blocks = ", ".join(f"{s['day']} {s['start'][11:16]}-{s['end'][11:16]}" for s in submission.schedules)
-    messages.success(request, f"Charge plan sent: limit {submission.charge_limit}%, charging {blocks}.")
     return redirect("tesla:dashboard")

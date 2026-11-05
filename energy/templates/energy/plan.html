@@ -63,8 +63,32 @@
             {% endif %}
         </div>
         <div class="card-footer bg-white"><small class="text-muted">
-            Prices known until {{ plan.prices_until|date:"D H:i"|default:"?" }}. The plan isn't sent to the car yet.
+            Prices known until {{ plan.prices_until|date:"D H:i"|default:"?" }}.
         </small></div>
+    </div>
+    {% endif %}
+
+    {# What's on the car #}
+    {% if decision or on_car %}
+    <div class="card card-dyn">
+        <div class="card-body">
+            <div class="card-title">
+                <span class="status-dot {% if decision.action == 'in_sync' %}ok{% elif decision.action == 'unplugged' or decision.action == 'budget' %}bad{% else %}warn{% endif %}"></span>On the car
+            </div>
+            <small class="d-block">
+                {% if decision.action == 'in_sync' %}The car has this plan.
+                {% elif decision.action == 'wait' %}Will be sent {{ decision.send_at|date:"D H:i" }}, an hour before the first change, so a later change doesn't cost an extra wake-up.
+                {% elif decision.action == 'send' %}Will be sent at the next check (within 30 minutes).
+                {% elif decision.action == 'unplugged' %}Not sent: the car isn't plugged in. It's sent once it is.
+                {% elif decision.action == 'budget' %}Not sent: the car was already woken {{ max_sends }} times in the last 24 hours.{% endif %}
+                {% if decision.reasons %}<span class="text-muted">({{ decision.summary }})</span>{% endif %}
+            </small>
+            {% if on_car %}
+            <small class="text-muted d-block mt-2">
+                Last sent {{ on_car.created_at|date:"D H:i" }}: limit {{ on_car.charge_limit }}%{% for start, end in on_car_blocks %}{% if forloop.first %}, {% else %}; {% endif %}{{ start|date:"D H:i" }}&ndash;{{ end|date:"H:i" }}{% empty %}, no schedules{% endfor %}.
+            </small>
+            {% endif %}
+        </div>
     </div>
     {% endif %}
 

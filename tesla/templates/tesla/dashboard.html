@@ -138,7 +138,7 @@
             {% for sub in submissions %}
                 <li class="mb-1">
                     <span class="status-dot {% if sub.succeeded %}ok{% else %}bad{% endif %}"></span>
-                    {{ sub.created_at|date:"d/m H:i" }} &middot; limit {{ sub.charge_limit }}% &middot; ready {{ sub.deadline|date:"D H:i" }}
+                    {{ sub.created_at|date:"d/m H:i" }} &middot; limit {{ sub.charge_limit }}% {% if sub.deadline %}&middot; ready {{ sub.deadline|date:"D H:i" }}{% endif %}{% if sub.trigger == "auto" %} &middot; automatic{% endif %}
                     {% if sub.error %}<br><span class="text-danger">{{ sub.error|truncatechars:200 }}</span>{% endif %}
                 </li>
             {% endfor %}
