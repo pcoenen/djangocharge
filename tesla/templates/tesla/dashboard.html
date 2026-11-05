@@ -1,7 +1,7 @@
 {% extends "prices/base.html" %}
 {% load tesla_extras %}
 {% block title %}Tesla - Dyncharge{% endblock %}
-{% block heading %}Tesla{% endblock %}
+{% block heading %}<a href="{% url 'prices:index' %}" class="arrow">Tesla</a>{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
 <div class="col-lg-8">

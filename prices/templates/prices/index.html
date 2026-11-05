@@ -21,5 +21,9 @@
             <a href="{% url 'tesla:dashboard' %}" class="btn btn-primary btn-lg btn-block">Tesla</a>
         </div>
     </div>
+    <form method="post" action="{% url 'logout' %}" class="text-center my-3">
+        {% csrf_token %}
+        <button class="btn btn-link text-white">Log out</button>
+    </form>
 </div>
 {% endblock %}
