@@ -66,7 +66,7 @@ def upcoming_slots(now, energy_settings):
 def needs(now):
     return [
         Need(deadline=t.deadline, pct=t.battery_pct, label=str(t))
-        for t in ChargeTarget.objects.filter(deadline__gt=now)
+        for t in ChargeTarget.objects.filter(deadline__gt=now, ignored=False)
     ]
 
 

@@ -1,18 +1,21 @@
 """The energy manager's periodic check (every 30 minutes via cron).
 
 1. Record what the car last reported to Tesla's cache (never wakes the car).
-2. Re-plan from the latest battery level, targets and prices; store the plan
+2. Read the calendar: every event becomes a 40% target 30 minutes before it.
+3. Re-plan from the latest battery level, targets and prices; store the plan
    when it changed.
-3. Report targets that can't be reached.
-4. Send the plan to the car when it differs and the first change is within
+4. Report targets that can't be reached.
+5. Send the plan to the car when it differs and the first change is within
    the hour (this wakes the car).
 """
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django.utils import timezone
 
 from energy import manager, sync
+from energy.calendar_sync import CalendarError, sync_calendar
 from energy.notify import notify
 from tesla import client
 
@@ -49,6 +52,15 @@ class Command(BaseCommand):
             errors.append(f"Tesla login failed: {e}")
         except client.TeslaError as e:
             errors.append(f"Reading the car's cached state failed: {e}")
+
+        if settings.CHARGE_CALENDAR_URL:
+            try:
+                added, changed, removed = sync_calendar(now)
+                self.stdout.write(f"Calendar: {added} added, {changed} changed, {removed} removed")
+            except CalendarError as e:
+                # keep the targets we have; the next check tries again
+                notify(f"calendar:{timezone.localdate(now)}", "Couldn't read the calendar", str(e))
+                errors.append(str(e))
 
         # Plan anyway: with the last known battery level if the cache read failed
         plan = manager.build_plan(now)

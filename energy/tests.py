@@ -390,3 +390,131 @@ class TickSyncTests(EnergyTestCase):
             with self.assertRaises(CommandError):
                 call_command("energy_tick", stdout=StringIO(), stderr=StringIO())
         self.assertIn("Reconnect Tesla", Notification.objects.get().subject)
+
+
+ICS = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VEVENT
+UID:shift-1
+DTSTAMP:20261101T000000Z
+DTSTART:20261110T070000Z
+DTEND:20261110T143000Z
+SUMMARY:V
+END:VEVENT
+BEGIN:VEVENT
+UID:shift-2
+DTSTAMP:20261101T000000Z
+DTSTART:20261111T213000Z
+DTEND:20261112T070000Z
+SUMMARY:N
+END:VEVENT
+BEGIN:VEVENT
+UID:cancelled
+DTSTAMP:20261101T000000Z
+DTSTART:20261110T120000Z
+SUMMARY:Gone
+STATUS:CANCELLED
+END:VEVENT
+BEGIN:VEVENT
+UID:weekly
+DTSTAMP:20261101T000000Z
+DTSTART:20261103T180000Z
+RRULE:FREQ=WEEKLY
+SUMMARY:Training
+END:VEVENT
+BEGIN:VEVENT
+UID:allday
+DTSTAMP:20261101T000000Z
+DTSTART;VALUE=DATE:20261112
+SUMMARY:Holiday
+END:VEVENT
+BEGIN:VEVENT
+UID:far
+DTSTAMP:20261101T000000Z
+DTSTART:20261130T070000Z
+SUMMARY:Later
+END:VEVENT
+END:VCALENDAR
+"""
+
+NOW = datetime(2026, 11, 10, 0, 0, tzinfo=UTC)
+
+
+@mock.patch("energy.calendar_sync.fetch")
+class CalendarTests(EnergyTestCase):
+    def sync(self, fetch, ics=ICS):
+        from .calendar_sync import sync_calendar
+
+        fetch.return_value = ics.encode()
+        return sync_calendar(NOW, url="https://example.com/cal.ics")
+
+    def targets(self):
+        return {t.label: t for t in ChargeTarget.objects.filter(source=ChargeTarget.CALENDAR)}
+
+    def test_events_become_40pct_targets_half_an_hour_before(self, fetch):
+        self.assertEqual(self.sync(fetch), (4, 0, 0))
+        t = self.targets()
+        # V, N, the weekly Training on Tue 10th, the all-day Holiday; not the cancelled or far one
+        self.assertEqual(set(t), {"V", "N", "Training", "Holiday"})
+        self.assertEqual(t["V"].deadline, datetime(2026, 11, 10, 6, 30, tzinfo=UTC))
+        self.assertEqual(t["V"].battery_pct, 40)
+        # all-day: local midnight (CET) minus 30 minutes
+        self.assertEqual(t["Holiday"].deadline, datetime(2026, 11, 11, 22, 30, tzinfo=UTC))
+        self.assertTrue(t["Training"].external_id.startswith("weekly@2026-11-10T18:00"))
+
+    def test_sync_is_idempotent(self, fetch):
+        self.sync(fetch)
+        self.assertEqual(self.sync(fetch), (0, 0, 0))
+
+    def test_moved_and_deleted_events(self, fetch):
+        self.sync(fetch)
+        moved = ICS.replace("DTSTART:20261110T070000Z", "DTSTART:20261110T080000Z")
+        moved = moved.replace("UID:shift-2", "UID:shift-2-deleted").replace("SUMMARY:N", "SUMMARY:N2")
+        self.assertEqual(self.sync(fetch, moved), (1, 1, 1))
+        t = self.targets()
+        self.assertEqual(t["V"].deadline, datetime(2026, 11, 10, 7, 30, tzinfo=UTC))
+        self.assertNotIn("N", t)
+
+    def test_ignored_stays_ignored_when_moved(self, fetch):
+        self.sync(fetch)
+        v = self.targets()["V"]
+        v.ignored = True
+        v.save()
+        self.sync(fetch, ICS.replace("DTSTART:20261110T070000Z", "DTSTART:20261110T090000Z"))
+        self.assertTrue(self.targets()["V"].ignored)
+
+    def test_ignored_targets_are_not_planned(self, fetch):
+        self.sync(fetch)
+        ChargeTarget.objects.exclude(label="V").delete()
+        self.assertEqual(len(manager.needs(NOW)), 1)
+        ChargeTarget.objects.update(ignored=True)
+        self.assertEqual(manager.needs(NOW), [])
+
+    def test_unreadable_calendar_keeps_targets(self, fetch):
+        from .calendar_sync import CalendarError, sync_calendar
+
+        self.sync(fetch)
+        fetch.side_effect = CalendarError("Reading the calendar failed: ConnectTimeout")
+        with self.assertRaises(CalendarError):
+            sync_calendar(NOW, url="https://example.com/cal.ics")
+        self.assertEqual(len(self.targets()), 4)
+
+    @mock.patch("energy.views._ensure_upcoming_prices")
+    def test_ignore_button(self, _, fetch):
+        self.sync(fetch)
+        v = self.targets()["V"]
+        ChargeTarget.objects.filter(pk=v.pk).update(deadline=self.now + timedelta(hours=5))
+        r = self.client.get("/energy/")
+        self.assertContains(r, "Ignore")
+        self.client.post(f"/energy/targets/{v.pk}/ignore/")
+        v.refresh_from_db()
+        self.assertTrue(v.ignored)
+        self.assertContains(self.client.get("/energy/"), "Use again")
+        self.client.post(f"/energy/targets/{v.pk}/ignore/")
+        v.refresh_from_db()
+        self.assertFalse(v.ignored)
+
+    def test_manual_targets_cant_be_ignored(self, fetch):
+        t = ChargeTarget.objects.create(battery_pct=60, deadline=self.now + timedelta(hours=3))
+        self.assertEqual(self.client.post(f"/energy/targets/{t.pk}/ignore/").status_code, 404)

@@ -90,6 +90,18 @@ def delete_target(request, pk):
     return redirect("energy:plan")
 
 
+@require_POST
+def toggle_ignore(request, pk):
+    target = get_object_or_404(ChargeTarget, pk=pk, source=ChargeTarget.CALENDAR)
+    target.ignored = not target.ignored
+    target.save(update_fields=["ignored"])
+    if target.ignored:
+        messages.success(request, f"No charging for {target.label} any more.")
+    else:
+        messages.success(request, f"Charging for {target.label} again.")
+    return redirect("energy:plan")
+
+
 def settings_view(request):
     obj = EnergySettings.load()
     form = SettingsForm(request.POST or None, instance=obj)

@@ -14,6 +14,7 @@ class ChargeTarget(models.Model):
     label = models.CharField(max_length=200, blank=True)
     source = models.CharField(max_length=20, choices=SOURCES, default=MANUAL)
     external_id = models.CharField(max_length=500, blank=True, help_text="Calendar event UID")
+    ignored = models.BooleanField(default=False, help_text="Calendar event you chose not to charge for")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
