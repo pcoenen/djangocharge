@@ -464,13 +464,13 @@ class CalendarTests(EnergyTestCase):
         self.assertEqual(t["Holiday"].deadline, datetime(2026, 11, 11, 22, 30, tzinfo=UTC))
         self.assertTrue(t["Training"].external_id.startswith("weekly@2026-11-10T18:00"))
 
-    def test_only_next_12_hours_by_default(self, fetch):
+    def test_only_next_24_hours_by_default(self, fetch):
         from . import calendar_sync
 
-        with mock.patch.object(calendar_sync, "LOOKAHEAD", timedelta(hours=12)):
+        with mock.patch.object(calendar_sync, "LOOKAHEAD", timedelta(hours=24)):
             self.sync(fetch)
-        # V starts 07:00 (within 12h); Training at 18:00 and later events are not yet included
-        self.assertEqual(set(self.targets()), {"V"})
+        # V (07:00) and Training (18:00) are within 24h; N and Holiday (the 11th/12th) not yet
+        self.assertEqual(set(self.targets()), {"V", "Training"})
 
     def test_sync_is_idempotent(self, fetch):
         self.sync(fetch)
