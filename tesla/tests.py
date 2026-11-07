@@ -172,6 +172,25 @@ class SendPlanTests(TeslaTestCase):
 
     @mock.patch("tesla.client.online_state", return_value="online")
     @mock.patch("tesla.client.send_signed")
+    def test_always_adds_a_recurring_hold_schedule(self, send, _):
+        """Without any schedule the car would charge as soon as it's plugged in."""
+        for groups in (self.groups, []):
+            sub = client.send_charge_plan(self.vehicle, groups, 50, self.deadline)
+            adds = [a[1] for a in send.call_args.args[1] if a[0] == "add_charge_schedule"]
+            hold = adds[-1]
+            self.assertEqual(len(adds), len(groups) + 1)
+            self.assertEqual(
+                {k: hold[k] for k in ("days_of_week", "start_time", "end_time", "one_time", "enabled")},
+                {"days_of_week": "All", "start_time": client.HOLD_START,
+                 "end_time": client.HOLD_START + client.HOLD_MINUTES, "one_time": False, "enabled": True},
+            )
+            self.assertEqual(sub.schedules[-1], {**sub.schedules[-1], "id": hold["id"], "hold": True})
+        # the next send removes the previous hold too
+        removed = [a[1]["id"] for a in send.call_args.args[1] if a[0] == "remove_charge_schedule"]
+        self.assertIn(ChargePlanSubmission.objects.order_by("pk").first().schedules[-1]["id"], removed)
+
+    @mock.patch("tesla.client.online_state", return_value="online")
+    @mock.patch("tesla.client.send_signed")
     def test_removes_all_schedules_on_the_car_first(self, send, _):
         # 7 and 9 were made in the Tesla app, not by Dyncharge
         self.charge_state.return_value = car_schedules(7, 9)
@@ -302,7 +321,10 @@ class ObservationTests(TeslaTestCase):
         self.assertEqual(vehicle.observations.count(), 2)
 
     def test_tick_never_wakes_or_commands(self):
-        make_account()
+        _, vehicle = make_account()
+        # nothing to charge and the hold schedule is already on the car
+        ChargePlanSubmission.objects.create(vehicle=vehicle, charge_limit=50, succeeded=True,
+                                            schedules=[{"id": 1, "hold": True}])
         with mock.patch("tesla.client.requests.request", return_value=response(data={"response": CACHED})) as request, \
                 mock.patch("tesla.client.wake_up") as wake, mock.patch("tesla.client.send_signed") as send:
             call_command("energy_tick", stdout=StringIO())

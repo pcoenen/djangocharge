@@ -21,6 +21,10 @@ from .models import CarObservation, ChargePlanSubmission, TeslaAccount, TeslaVeh
 logger = logging.getLogger(__name__)
 
 MIN_CHARGE_LIMIT = 50  # Tesla doesn't accept a lower charge limit
+# A car without any charge schedule at home charges as soon as it's plugged in.
+# This recurring 1-minute schedule stays on the car so it always waits for a schedule.
+HOLD_START = 4 * 60  # 04:00, minutes since midnight
+HOLD_MINUTES = 1
 
 
 class TeslaError(Exception):
@@ -309,7 +313,8 @@ def send_charge_plan(vehicle, groups, charge_limit, deadline=None, trigger="manu
     `groups` are [{"start", "end"}] aware datetimes; an empty list just clears
     the schedules. Removes every schedule on the car (also ones made in the
     Tesla app), plus any schedules from earlier Dyncharge plans that weren't
-    confirmed removed.
+    confirmed removed. Always adds the hold schedule, so the car never charges
+    outside the plan.
     """
     limit = max(MIN_CHARGE_LIMIT, min(100, int(charge_limit)))
     tz = timezone.get_current_timezone()
@@ -337,6 +342,8 @@ def send_charge_plan(vehicle, groups, charge_limit, deadline=None, trigger="manu
         base_id = max([int(time.time())] + [i + 1 for i in old_ids])
         for i, s in enumerate(schedules):
             s["id"] = base_id + i
+        hold = {"id": base_id + len(schedules), "hold": True, "day": "All",
+                "start_time": HOLD_START, "end_time": HOLD_START + HOLD_MINUTES}
 
         actions = [("set_charge_limit", {"percent": limit}, True)]  # fails harmlessly if already set
         # optional: earlier one-time schedules may already be gone
@@ -351,14 +358,15 @@ def send_charge_plan(vehicle, groups, charge_limit, deadline=None, trigger="manu
                     "lon": settings.TESLA_HOME_LON,
                     "start_time": s["start_time"],
                     "end_time": s["end_time"],
-                    "one_time": True,
+                    "one_time": not s.get("hold", False),
                     "id": s["id"],
-                    "name": "DynCharge",
+                    "name": "DynCharge hold" if s.get("hold") else "DynCharge",
                 },
                 False,
             )
-            for s in schedules
+            for s in schedules + [hold]
         ]
+        submission.schedules = schedules + [hold]
         send_signed(vehicle.vin, actions)
     except TeslaError as e:
         submission.error = str(e)

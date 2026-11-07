@@ -30,7 +30,9 @@ python manage.py test prices
 `python manage.py energy_tick` runs every 30 minutes (cron). It reads the car's battery from
 Tesla's cache (never wakes the car), re-plans (price rule first, then each target's shortfall with
 the cheapest quarters before its deadline) and, one hour before the first quarter that differs
-from what's on the car, wakes the car and replaces its charge schedules and limit. A car that
+from what's on the car, wakes the car and replaces its charge schedules and limit. A recurring 1-minute "hold" schedule
+(04:00 daily) always stays on the car: without any schedule, a Tesla charges as soon as it's
+plugged in. A car that
 isn't plugged in isn't woken; at most 6 sends a day. Problems are emailed once to `NOTIFY_EMAIL`
 through Maileroo SMTP (the preference_planner account); set `EMAIL_HOST_PASSWORD` to enable.
 

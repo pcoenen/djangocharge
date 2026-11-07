@@ -252,7 +252,8 @@ class SyncTests(TestCase):
 
         sub = ChargePlanSubmission.objects.create(
             vehicle=self.vehicle, charge_limit=limit or plan.charge_limit, succeeded=ok, trigger=trigger,
-            schedules=[{"start": b.start.isoformat(), "end": b.end.isoformat()} for b in plan.blocks],
+            schedules=[{"start": b.start.isoformat(), "end": b.end.isoformat()} for b in plan.blocks]
+            + [{"id": 1, "hold": True}],
         )
         if created:
             ChargePlanSubmission.objects.filter(pk=sub.pk).update(created_at=created)
@@ -262,6 +263,7 @@ class SyncTests(TestCase):
         from . import sync
 
         early = self.night - timedelta(hours=3)
+        self.sent(make_plan(50, self.slots, [], now=early, pct_per_quarter=1), limit=50)
         d = sync.decide(self.plan(early), self.vehicle, self.obs, early)
         self.assertEqual(d.action, sync.WAIT)
         self.assertEqual(d.send_at, self.night)  # charging starts 01:00 -> send at 00:00
@@ -272,11 +274,32 @@ class SyncTests(TestCase):
         self.assertEqual(sync.decide(self.plan(half_hour_before), self.vehicle, self.obs, half_hour_before).action,
                          sync.WAIT)
 
-    def test_nothing_planned_and_never_sent_doesnt_wake(self):
+    def test_nothing_planned_and_never_sent_sends_the_hold_schedule(self):
+        """A car without schedules charges as soon as it's plugged in."""
         from . import sync
 
         plan = make_plan(50, self.slots, [], now=self.night, pct_per_quarter=1)
+        d = sync.decide(plan, self.vehicle, self.obs, self.night)
+        self.assertEqual(d.action, sync.SEND)
+        self.assertFalse(d.must)
+
+    def test_nothing_planned_and_hold_on_car_doesnt_wake(self):
+        from . import sync
+
+        plan = make_plan(50, self.slots, [], now=self.night, pct_per_quarter=1)
+        self.sent(plan, limit=50)
         self.assertEqual(sync.decide(plan, self.vehicle, self.obs, self.night).action, sync.IN_SYNC)
+
+    def test_plan_sent_without_hold_is_resent(self):
+        from tesla.models import ChargePlanSubmission
+
+        from . import sync
+
+        plan = make_plan(50, self.slots, [], now=self.night, pct_per_quarter=1)
+        ChargePlanSubmission.objects.create(vehicle=self.vehicle, charge_limit=50, succeeded=True, schedules=[])
+        d = sync.decide(plan, self.vehicle, self.obs, self.night)
+        self.assertEqual(d.action, sync.SEND)
+        self.assertIn("no hold schedule", d.summary)
 
     def test_in_sync_after_sending(self):
         from . import sync

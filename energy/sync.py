@@ -7,6 +7,8 @@ Rules:
 - Send one hour before the first quarter that differs (02:00 → the 01:00 check), so
   the plan includes everything known by then (battery after the evening drive,
   new prices). Sending wakes the car.
+- The car always keeps a 1-minute hold schedule (see tesla.client), because a
+  car without schedules charges as soon as it's plugged in.
 - Don't send to a car that isn't plugged in (plugging in wakes it and the next
   check picks it up), and at most MAX_SENDS_PER_DAY times a day.
 """
@@ -61,7 +63,12 @@ def on_car(vehicle):
 
 
 def _submission_blocks(sub):
-    return [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"])) for s in sub.schedules]
+    return [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+            for s in sub.schedules if not s.get("hold")]
+
+
+def has_hold(sub):
+    return any(s.get("hold") for s in sub.schedules)
 
 
 def desired_limit(plan):
@@ -102,11 +109,14 @@ def decide(plan, vehicle, observation, now=None):
         reasons.append("the car would charge more than planned")
         times.append(late[0])
     if car_limit is None:
-        # Never sent: only worth a wake once there's something to charge
-        if want:
-            reasons.append("no plan sent to the car yet")
-            times.append(min(want))
-    elif limit > car_limit or car_limit > limit + LIMIT_SLACK:
+        # Never sent: the car has no hold schedule, so it charges whenever it's plugged in
+        reasons.append("no plan sent to the car yet")
+        times.append(now)
+    elif not has_hold(sub):
+        # Sent before the hold schedule existed: without it the car charges whenever it's plugged in
+        reasons.append("the car has no hold schedule")
+        times.append(now)
+    if car_limit is not None and (limit > car_limit or car_limit > limit + LIMIT_SLACK):
         reasons.append(f"charge limit {car_limit}% → {limit}%")
         times.append(min(want | have, default=now))
         must = must or limit > car_limit
